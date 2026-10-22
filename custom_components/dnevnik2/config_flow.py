@@ -493,9 +493,6 @@ class Dnevnik2OptionsFlow(OptionsFlow):
             new_options[CONF_SCAN_INTERVAL] = int(
                 user_input.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_MIN)
             )
-            new_options[CONF_BALANCE_LIMIT] = int(
-                user_input.get(CONF_BALANCE_LIMIT, DEFAULT_BALANCE_LIMIT)
-            )
 
             raw_token = str(user_input.get(CONF_TOKEN) or "").strip()
             if raw_token:
@@ -542,10 +539,6 @@ class Dnevnik2OptionsFlow(OptionsFlow):
             CONF_SCAN_INTERVAL,
             self._entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_MIN),
         )
-        current_balance_limit = self._entry.options.get(
-            CONF_BALANCE_LIMIT,
-            self._entry.data.get(CONF_BALANCE_LIMIT, DEFAULT_BALANCE_LIMIT),
-        )
 
         schema = vol.Schema(
             {
@@ -565,17 +558,6 @@ class Dnevnik2OptionsFlow(OptionsFlow):
                         options=list(OUTPUT_MODES),
                         translation_key="output_mode",
                         mode=selector.SelectSelectorMode.DROPDOWN,
-                    )
-                ),
-                vol.Required(
-                    CONF_BALANCE_LIMIT, default=current_balance_limit
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=MIN_BALANCE_LIMIT,
-                        max=MAX_BALANCE_LIMIT,
-                        step=STEP_BALANCE_LIMIT,
-                        unit_of_measurement="RUB",
-                        mode=selector.NumberSelectorMode.BOX,
                     )
                 ),
                 vol.Required(
