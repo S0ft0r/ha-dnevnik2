@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 import logging
 from pathlib import Path
 from typing import Any
@@ -16,8 +17,14 @@ from homeassistant.helpers import (
     device_registry as dr,
     entity_registry as er,
 )
+from homeassistant.helpers.event import async_track_time_interval
 
-from .const import DOMAIN, OUTPUT_MODE_SENSOR, OUTPUT_MODE_TODO
+from .const import (
+    DOMAIN,
+    KEEP_ALIVE_INTERVAL_MIN,
+    OUTPUT_MODE_SENSOR,
+    OUTPUT_MODE_TODO,
+)
 from .manager import Dnevnik2Coordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -135,6 +142,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _remove_stale_devices(dev_reg, entry, coordinator)
 
+    entry.async_on_unload(
+        async_track_time_interval(
+            hass,
+            coordinator.async_keep_alive_tick,
+            timedelta(minutes=KEEP_ALIVE_INTERVAL_MIN),
+        )
+    )
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
 
@@ -152,7 +166,7 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
     coordinator: Dnevnik2Coordinator | None = hass.data.get(DOMAIN, {}).get(
         entry.entry_id
     )
-    if coordinator and coordinator.consume_ignore_options_update():
+    if coordinator and not coordinator.should_reload_on_entry_update(entry):
         return
     await hass.config_entries.async_reload(entry.entry_id)
 

@@ -208,7 +208,6 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
         self.main_device_id: str | None = None
         self.student_device_ids: dict[str, str] = {}
         self._translations: dict[str, Any] = {}
-        self._ignore_update_count = 0
         self._todo_store: Store[dict[str, list[str]]] = Store(
             hass, STORAGE_VERSION, f"{DOMAIN}_todo_{entry.entry_id}"
         )
@@ -227,6 +226,7 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
             token=token,
             on_token_refreshed=self._on_token_refreshed,
         )
+        self._loaded_signature = self.config_signature
 
         super().__init__(
             hass,
@@ -254,6 +254,36 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
                 self.entry.data.get(CONF_LESSONS_MODE, DEFAULT_LESSONS_MODE),
             )
         )
+
+    @property
+    def scan_interval_minutes(self) -> int:
+        """Выбранный интервал полного обновления данных (мин.)."""
+        return int(
+            self.entry.options.get(
+                CONF_SCAN_INTERVAL,
+                self.entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_MIN),
+            )
+        )
+
+    @property
+    def config_signature(self) -> tuple[str, str, int]:
+        """Сигнатура пользовательских настроек для фильтрации фонового обновления токена."""
+        return (
+            self.homework_mode,
+            self.lessons_mode,
+            self.scan_interval_minutes,
+        )
+
+    def should_reload_on_entry_update(self, entry: ConfigEntry) -> bool:
+        """Возвращает True только если изменились настройки или токен был заменён вручную."""
+        new_token = str(entry.data.get(CONF_TOKEN, ""))
+        if new_token and new_token != self.client.token:
+            return True
+        return self.config_signature != self._loaded_signature
+
+    async def async_keep_alive_tick(self, _now: datetime | None = None) -> None:
+        """Периодический фоновый пинг портала (раз в 4 мин.) для поддержания скользящей сессии."""
+        await self.client.async_keep_alive()
 
     async def async_init_translations(self) -> None:
         """Асинхронно загружает локализацию и сохранённые отметки выполненных элементов Todo."""
@@ -332,17 +362,9 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
         """Сохраняет обновлённый Set-Cookie X-JWT-Token в ConfigEntry.data без перезагрузки."""
         if not new_token or new_token == self.entry.data.get(CONF_TOKEN):
             return
-        self._ignore_update_count += 1
         new_data = {**self.entry.data, CONF_TOKEN: new_token}
         self.hass.config_entries.async_update_entry(self.entry, data=new_data)
         _LOGGER.debug("%s", self.tr_log("log_token_refreshed"))
-
-    def consume_ignore_options_update(self) -> bool:
-        """Позволяет пропустить перезагрузку записи при фоновом обновлении токена."""
-        if self._ignore_update_count > 0:
-            self._ignore_update_count -= 1
-            return True
-        return False
 
     @property
     def device_info(self) -> dict[str, Any]:

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from datetime import date
-from http.cookies import SimpleCookie
 import re
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
@@ -36,6 +35,10 @@ from .const import (
 )
 
 _JWT_RE = re.compile(r"(eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)")
+_SET_COOKIE_JWT_RE = re.compile(
+    r"X-JWT-Token\s*=\s*(eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)",
+    re.IGNORECASE,
+)
 _GROUP_SPACE_RE = re.compile(r"(\d+)\s+([^\W\d_])")
 _GLOLIME_ROW_RE = re.compile(
     r"<tr[^>]*>\s*<td[^>]*>(.*?)</td>\s*<td[^>]*>(.*?)</td>",
@@ -168,6 +171,31 @@ class Dnevnik2Client:
             except Exception:
                 pass
 
+    def _extract_refreshed_cookie(self, response: ClientResponse) -> str | None:
+        """Извлекает обновлённый скользящий X-JWT-Token из заголовков Set-Cookie ответа."""
+        root_path_token: str | None = None
+        last_token: str | None = None
+        for header_val in response.headers.getall("Set-Cookie", []):
+            match = _SET_COOKIE_JWT_RE.search(header_val)
+            if not match:
+                continue
+            candidate = match.group(1).strip()
+            last_token = candidate
+            lower_hdr = header_val.lower()
+            if "path=/;" in lower_hdr or lower_hdr.endswith("path=/"):
+                root_path_token = candidate
+        if root_path_token:
+            return root_path_token
+        if last_token:
+            return last_token
+        try:
+            cookie = response.cookies.get(SESSION_COOKIE)
+            if cookie and cookie.value and cookie.value.startswith("eyJ"):
+                return cookie.value
+        except Exception:
+            pass
+        return None
+
     async def _request(
         self,
         path: str,
@@ -175,7 +203,7 @@ class Dnevnik2Client:
         *,
         include_auth: bool = True,
     ) -> dict[str, Any]:
-        """Выполняет GET-запрос к API дневника без конфликтов в общем CookieJar."""
+        """Выполняет GET-запрос к API дневника, обновляя скользящий X-JWT-Token без дублей в CookieJar."""
         url = f"{BASE_URL}{path}"
         self._clear_session_cookie_jar()
         try:
@@ -187,6 +215,12 @@ class Dnevnik2Client:
                 allow_redirects=False,
                 ssl=False,
             ) as response:
+                if include_auth:
+                    refreshed = self._extract_refreshed_cookie(response)
+                    if refreshed and refreshed != self._token:
+                        self._token = refreshed
+                        if self._on_token_refreshed is not None:
+                            self._on_token_refreshed(refreshed)
                 self._clear_session_cookie_jar()
 
                 if response.status in (301, 302, 303, 307, 308, 401, 403):
@@ -244,6 +278,14 @@ class Dnevnik2Client:
     async def async_get_current_user(self) -> dict[str, Any]:
         """Возвращает профиль текущего пользователя (/api/journal/user/get-current-user)."""
         return await self._request(EP_CURRENT_USER)
+
+    async def async_keep_alive(self) -> bool:
+        """Фоновый пинг сессии для скользящего продления X-JWT-Token без простоя."""
+        try:
+            await self._request(EP_RELATED_CHILDREN, params={"p_page": "1"})
+            return True
+        except Dnevnik2Error:
+            return False
 
     async def async_get_children(self) -> list[dict[str, Any]]:
         """Список связанных детей и их обучений (/api/journal/person/related-child-list)."""

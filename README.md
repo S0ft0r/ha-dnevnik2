@@ -7,12 +7,12 @@
   </picture>
 </p>
 
-[![Version](https://img.shields.io/badge/version-0.1.14-blue.svg)](https://github.com/S0ft0r/ha-dnevnik2)
+[![Version](https://img.shields.io/badge/version-0.1.16-blue.svg)](https://github.com/S0ft0r/ha-dnevnik2)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2026.8%2B-41BDF5.svg)](https://www.home-assistant.io/)
 
 📋 **История изменений:** [CHANGELOG.md](CHANGELOG.md)
 
-**Версия:** 0.1.14  
+**Версия:** 0.1.16  
 **Домен интеграции:** `dnevnik2`
 
 Кастомная интеграция для подключения портала **«Петербургское образование. Электронный дневник»** (`https://dnevnik2.petersburgedu.ru`) к **Home Assistant**.

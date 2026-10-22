@@ -1,0 +1,306 @@
+blueprint:
+  name: "🎓 Электронный дневник СПб (dnevnik2) — Уведомления об оценках, посещения школы, ДЗ и балансе питания"
+  description: >
+    Универсальный чертёж (Blueprint) уведомлений для интеграции **Электронный дневник СПб (`dnevnik2`)**.
+
+    Поддерживает:
+    1. **Новые оценки** (по событию `dnevnik2_new_grade`) с раздельными шаблонами текста для хороших (`4–5`) и низких (`2–3`) оценок.
+    2. **Проход через турникет школы** (по событию `dnevnik2_turnstile`) — вход и выход из здания школы.
+    3. **Вечернее напоминание о невыполненных домашних заданиях** — работает и со списком дел (`todo.*`), и с сенсором (`sensor.*`).
+    4. **Оповещение о низком балансе школьного питания** (`sensor.*_meal_balance`).
+
+    В блоке действия («Куда отправлять уведомление») доступны готовые переменные **`{{ notification_title }}`** и **`{{ notification_message }}`**.
+  domain: automation
+  author: S0ft0r
+  source_url: https://github.com/S0ft0r/ha-dnevnik2/blob/main/blueprint/ha_notifications.yaml
+  homeassistant:
+    min_version: 2024.6.0
+
+  input:
+    student_filter_section:
+      name: "1. Выбор учащихся (необязательно)"
+      icon: mdi:account-school-outline
+      collapsed: false
+      input:
+        student_device:
+          name: "Учащийся"
+          description: "Оставьте пустым, чтобы получать уведомления по всем учащимся профиля, или выберите конкретную персону"
+          default: ""
+          selector:
+            device:
+              integration: dnevnik2
+
+    grades_section:
+      name: "2. Уведомления о новых оценках"
+      icon: mdi:numeric-5-box-outline
+      collapsed: false
+      input:
+        enable_grades:
+          name: "Включить уведомления о новых оценках"
+          default: true
+          selector:
+            boolean: {}
+        max_grade_to_notify:
+          name: "Уведомлять об оценках не выше"
+          description: "5 — уведомлять о любых оценках (2..5); 3 — уведомлять только о тройках и двойках."
+          default: 5
+          selector:
+            number:
+              min: 2
+              max: 5
+              step: 1
+              mode: slider
+        grade_title_template:
+          name: "Заголовок уведомления об оценке"
+          default: "🎓 Новая оценка: {{ first_name }} — {{ value }} ({{ subject }})"
+          selector:
+            text: {}
+        good_grade_message_template:
+          name: "Текст для хорошей оценки (4 и 5)"
+          description: "Доступные переменные: {{ first_name }}, {{ short_name }}, {{ value }}, {{ subject }}, {{ work_type }}, {{ comment }}, {{ average_grade }}."
+          default: >
+            Отличная новость! {{ first_name }} получил(а) оценку {{ value }} по предмету «{{ subject }}» ({{ work_type }}).
+            {% if comment %}Комментарий учителя: «{{ comment }}». {% endif %}Средний балл в четверти: {{ average_grade }}.
+          selector:
+            text:
+              multiline: true
+        bad_grade_message_template:
+          name: "Текст для низкой оценки (2 и 3)"
+          default: >
+            Обрати внимание: {{ first_name }} получил(а) оценку {{ value }} по предмету «{{ subject }}» ({{ work_type }}).
+            {% if comment %}Комментарий учителя: «{{ comment }}». {% endif %}Текущий средний балл: {{ average_grade }}.
+          selector:
+            text:
+              multiline: true
+
+    turnstile_section:
+      name: "3. Уведомления о проходе через турникет школы"
+      icon: mdi:door-closed
+      collapsed: false
+      input:
+        enable_turnstile:
+          name: "Включить уведомления турникета СКУД"
+          default: true
+          selector:
+            boolean: {}
+        turnstile_title_template:
+          name: "Заголовок уведомления турникета"
+          default: "Школа: {{ first_name }}"
+          selector:
+            text: {}
+        turnstile_enter_template:
+          name: "Текст при входе в школу"
+          description: "Доступные переменные: {{ first_name }}, {{ short_name }}, {{ datetime }}, {{ direction }}."
+          default: "{{ first_name }} зашёл(ла) в здание школы ({{ datetime }})."
+          selector:
+            text:
+              multiline: true
+        turnstile_exit_template:
+          name: "Текст при выходе из школы"
+          default: "{{ first_name }} вышел(ла) из здания школы ({{ datetime }})."
+          selector:
+            text:
+              multiline: true
+
+    homework_section:
+      name: "4. Вечернее напоминание о невыполненных ДЗ"
+      icon: mdi:book-open-page-variant-outline
+      collapsed: true
+      input:
+        homework_entity:
+          name: "Сущность домашних заданий ученика (todo или sensor)"
+          description: "Выберите список дел todo.<ученик>_homework или сенсор sensor.<ученик>_homework."
+          default: ""
+          selector:
+            entity:
+              integration: dnevnik2
+              domain:
+                - todo
+                - sensor
+        homework_reminder_time:
+          name: "Время вечерней проверки ДЗ"
+          default: "18:30:00"
+          selector:
+            time: {}
+        homework_title_template:
+          name: "Заголовок напоминания о ДЗ"
+          default: "Невыполненные уроки: {{ state_attr(homework_entity, 'first_name') or 'Ученик' }} ({{ states(homework_entity) }})"
+          selector:
+            text: {}
+        homework_message_template:
+          name: "Текст напоминания о ДЗ"
+          default: >
+            Осталось выполнить заданий: {{ states(homework_entity) }}.
+
+            {{ state_attr(homework_entity, 'uncompleted_text') }}
+          selector:
+            text:
+              multiline: true
+
+    meal_section:
+      name: "5. Контроль баланса школьного питания"
+      icon: mdi:silverware-fork-knife
+      collapsed: true
+      input:
+        meal_balance_entity:
+          name: "Сенсор баланса питания ученика"
+          default: ""
+          selector:
+            entity:
+              integration: dnevnik2
+              domain: sensor
+              device_class: monetary
+        meal_low_threshold:
+          name: "Порог низкого баланса (₽)"
+          default: 300
+          selector:
+            number:
+              min: 50
+              max: 2000
+              step: 50
+              unit_of_measurement: "₽"
+              mode: slider
+        meal_title_template:
+          name: "Заголовок уведомления о балансе питания"
+          default: "Пора пополнить баланс школьного питание"
+          selector:
+            text: {}
+        meal_message_template:
+          name: "Текст уведомления о балансе питания"
+          default: >
+            На счёте питания осталось {{ states(meal_balance_entity) }} ₽ (горячее питание: {{ state_attr(meal_balance_entity, 'hot_balance') }} ₽, буфет: {{ state_attr(meal_balance_entity, 'buffet_balance') }} ₽).
+          selector:
+            text:
+              multiline: true
+
+    notify_section:
+      name: "6. Действие отправки уведомления"
+      icon: mdi:bell-ring-outline
+      collapsed: false
+      input:
+        notify_actions:
+          name: "Куда отправлять уведомление"
+          description: >
+            Добавьте вызов вашего сервиса уведомлений (`notify.mobile_app_*`, `telegram_bot.send_message`, `persistent_notification.create`, `tts.*`).
+            Используйте переменные `{{ notification_title }}` для заголовка и `{{ notification_message }}` для текста сообщения.
+          default: []
+          selector:
+            action: {}
+
+mode: queued
+max: 10
+
+variables:
+  target_device_id: !input student_device
+  enable_grades: !input enable_grades
+  max_grade_to_notify: !input max_grade_to_notify
+  enable_turnstile: !input enable_turnstile
+  homework_entity: !input homework_entity
+  meal_balance_entity: !input meal_balance_entity
+  meal_low_threshold: !input meal_low_threshold
+
+trigger:
+  - platform: event
+    event_type: dnevnik2_new_grade
+    id: new_grade
+  - platform: event
+    event_type: dnevnik2_turnstile
+    id: turnstile
+  - platform: time
+    at: !input homework_reminder_time
+    id: homework_reminder
+  - platform: time
+    at: "10:00:00"
+    id: meal_check
+
+condition: []
+
+action:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: new_grade
+          - condition: template
+            value_template: "{{ enable_grades }}"
+          - condition: template
+            value_template: >
+              {{ not target_device_id or trigger.event.data.device_id == target_device_id }}
+          - condition: template
+            value_template: >
+              {{ (trigger.event.data.value | int(5)) <= (max_grade_to_notify | int(5)) }}
+        sequence:
+          - variables:
+              first_name: "{{ trigger.event.data.first_name }}"
+              short_name: "{{ trigger.event.data.short_name }}"
+              full_name: "{{ trigger.event.data.full_name }}"
+              value: "{{ trigger.event.data.value }}"
+              subject: "{{ trigger.event.data.subject }}"
+              date: "{{ trigger.event.data.date }}"
+              work_type: "{{ trigger.event.data.work_type }}"
+              comment: "{{ trigger.event.data.comment }}"
+              average_grade: "{{ trigger.event.data.average_grade }}"
+              notification_title: !input grade_title_template
+              notification_message: >-
+                {% if (trigger.event.data.value | int(5)) >= 4 %}
+                  {{ good_msg }}
+                {% else %}
+                  {{ bad_msg }}
+                {% endif %}
+              good_msg: !input good_grade_message_template
+              bad_msg: !input bad_grade_message_template
+          - choose: []
+            default: !input notify_actions
+
+      - conditions:
+          - condition: trigger
+            id: turnstile
+          - condition: template
+            value_template: "{{ enable_turnstile }}"
+          - condition: template
+            value_template: >
+              {{ not target_device_id or trigger.event.data.device_id == target_device_id }}
+        sequence:
+          - variables:
+              first_name: "{{ trigger.event.data.first_name }}"
+              short_name: "{{ trigger.event.data.short_name }}"
+              full_name: "{{ trigger.event.data.full_name }}"
+              at_school: "{{ trigger.event.data.at_school }}"
+              direction: "{{ trigger.event.data.direction }}"
+              datetime: "{{ trigger.event.data.datetime }}"
+              notification_title: !input turnstile_title_template
+              enter_msg: !input turnstile_enter_template
+              exit_msg: !input turnstile_exit_template
+              notification_message: >-
+                {% if trigger.event.data.at_school %}
+                  {{ enter_msg }}
+                {% else %}
+                  {{ exit_msg }}
+                {% endif %}
+          - choose: []
+            default: !input notify_actions
+
+      - conditions:
+          - condition: trigger
+            id: homework_reminder
+          - condition: template
+            value_template: >
+              {{ homework_entity != '' and (states(homework_entity) | int(0)) > 0 }}
+        sequence:
+          - variables:
+              notification_title: !input homework_title_template
+              notification_message: !input homework_message_template
+          - choose: []
+            default: !input notify_actions
+
+      - conditions:
+          - condition: trigger
+            id: meal_check
+          - condition: template
+            value_template: >
+              {{ meal_balance_entity != '' and (states(meal_balance_entity) | float(99999)) < (meal_low_threshold | float(300)) }}
+        sequence:
+          - variables:
+              notification_title: !input meal_title_template
+              notification_message: !input meal_message_template
+          - choose: []
+            default: !input notify_actions
