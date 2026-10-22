@@ -1,0 +1,55 @@
+{
+  "entity": {
+    "sensor": {
+      "account_status": {
+        "default": "mdi:school"
+      },
+      "average_grade": {
+        "default": "dnevnik2:grade-avg"
+      },
+      "last_grade": {
+        "default": "mdi:numeric-5-box-outline"
+      },
+      "homework": {
+        "default": "dnevnik2:homework",
+        "state": {
+          "0": "dnevnik2:homework-done"
+        }
+      },
+      "lessons_today": {
+        "default": "dnevnik2:schedule"
+      },
+      "turnstile_last": {
+        "default": "dnevnik2:turnstile-clock"
+      },
+      "meal_balance": {
+        "default": "dnevnik2:meal-balance"
+      }
+    },
+    "todo": {
+      "homework": {
+        "default": "dnevnik2:homework",
+        "state": {
+          "0": "dnevnik2:homework-done"
+        }
+      },
+      "lessons_today": {
+        "default": "dnevnik2:schedule"
+      }
+    },
+    "binary_sensor": {
+      "at_school": {
+        "default": "dnevnik2:school-off",
+        "state": {
+          "on": "mdi:school",
+          "off": "dnevnik2:school-off"
+        }
+      }
+    },
+    "button": {
+      "refresh": {
+        "default": "mdi:database-sync"
+      }
+    }
+  }
+}

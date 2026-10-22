@@ -1,0 +1,122 @@
+{
+  "title": "St. Petersburg Electronic Diary",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Step 1 of 2 — Sign in to St. Petersburg Electronic Diary",
+        "description": "Step-by-step instructions to obtain your session token:\n\n1. Open the ESIA (Gosuslugi) login page in a new browser tab:\n[Sign in to St. Petersburg Diary]({esia_url})\n\n2. Sign in via Gosuslugi and wait for the diary page to load.\n3. On the diary page, press `F12` (or `Ctrl+Shift+I`), open the `Application` tab → expand `Cookies` in the left sidebar and select the diary domain.\n4. Find `X-JWT-Token`, copy its value (starts with `eyJ...`), and paste it into the field below.{client_hint}",
+        "data": {
+          "token": "X-JWT-Token (eyJ...)"
+        }
+      },
+      "settings": {
+        "title": "Step 2 of 2 — Integration Settings",
+        "description": "✅ Authentication successful! Linked students found: **{students_summary}**.\n\nChoose the integration name and output format for homework and lessons.",
+        "data": {
+          "name": "Integration name",
+          "homework_mode": "Homework output format",
+          "lessons_mode": "Lessons schedule output format",
+          "scan_interval": "Update interval (min)"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate with St. Petersburg Electronic Diary",
+        "description": "Session expired. Open the login link:\n[Sign in via ESIA]({esia_url})\n\nCopy the new `X-JWT-Token` via `F12` → `Application` → `Cookies` and paste it below.",
+        "data": {
+          "token": "New X-JWT-Token (eyJ...)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the diary server (requires Russian IP).",
+      "invalid_auth": "Session is invalid or rejected by the server.",
+      "invalid_token_format": "No valid JWT token (eyJ...) found in the provided input.",
+      "no_students_found": "No linked students found in this profile."
+    },
+    "abort": {
+      "already_configured": "This account is already configured.",
+      "reauth_successful": "Authentication updated successfully."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "St. Petersburg Electronic Diary Settings",
+        "description": "Configure the output format for homework and lessons (switching formats automatically replaces old entities), update interval, or replace the `X-JWT-Token` (leave empty to keep the current token).",
+        "data": {
+          "homework_mode": "Homework output format",
+          "lessons_mode": "Lessons schedule output format",
+          "scan_interval": "Update interval (min.)",
+          "token": "New X-JWT-Token (optional)"
+        }
+      }
+    }
+  },
+  "selector": {
+    "output_mode": {
+      "options": {
+        "todo": "To-do list",
+        "sensor": "Sensor with text attribute"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "account_status": {
+        "name": "Students in profile"
+      },
+      "average_grade": {
+        "name": "Average grade"
+      },
+      "last_grade": {
+        "name": "Last grade"
+      },
+      "homework": {
+        "name": "Homework"
+      },
+      "lessons_today": {
+        "name": "Lessons today"
+      },
+      "turnstile_last": {
+        "name": "Last turnstile event"
+      },
+      "meal_balance": {
+        "name": "Meal balance"
+      }
+    },
+    "todo": {
+      "homework": {
+        "name": "Homework"
+      },
+      "lessons_today": {
+        "name": "Lessons schedule"
+      }
+    },
+    "binary_sensor": {
+      "at_school": {
+        "name": "At school"
+      }
+    },
+    "button": {
+      "refresh": {
+        "name": "Refresh data"
+      }
+    }
+  },
+  "common": {
+    "device_manufacturer": "Petersburg Education",
+    "device_model_main": "Parent Account",
+    "device_model_student": "Student",
+    "student_device_name": "{student_name}",
+    "student_with_group": "{name} ({group})",
+    "client_hint_companion": "💡 Setup opened from a mobile device (Home Assistant Companion). Mobile WebViews do not expose third-party site cookies or F12 DevTools — we recommend copying the X-JWT-Token from a desktop browser.",
+    "error_auth_expired": "X-JWT-Token session expired, re-authentication required",
+    "log_setup_entry": "Starting St. Petersburg Electronic Diary integration: {title}",
+    "log_token_refreshed": "X-JWT-Token session cookie automatically renewed by server",
+    "no_homework_text": "No active homework",
+    "no_lessons_text": "No lessons today",
+    "room_short": "rm.",
+    "direction_in_prefixes": "вход|приход|in|input|enter|entry|1",
+    "direction_out_prefixes": "вых|уход|out|output|exit|leave|2"
+  }
+}
