@@ -206,6 +206,9 @@ trigger:
   - platform: event
     event_type: dnevnik2_turnstile
     id: turnstile
+  - platform: event
+    event_type: dnevnik2_low_balance
+    id: low_balance
   - platform: time
     at: !input homework_reminder_time
     id: homework_reminder
@@ -300,6 +303,30 @@ action:
               {{ meal_balance_entity != '' and (states(meal_balance_entity) | float(99999)) < (meal_low_threshold | float(300)) }}
         sequence:
           - variables:
+              notification_title: !input meal_title_template
+              notification_message: !input meal_message_template
+          - choose: []
+            default: !input notify_actions
+
+      - conditions:
+          - condition: trigger
+            id: low_balance
+          - condition: template
+            value_template: "{{ enable_low_balance }}"
+          - condition: template
+            value_template: >
+              {{ not target_device_id or trigger.event.data.device_id == target_device_id }}
+        sequence:
+          - variables:
+              first_name: "{{ trigger.event.data.first_name }}"
+              short_name: "{{ trigger.event.data.short_name }}"
+              full_name: "{{ trigger.event.data.full_name }}"
+              account: "{{ trigger.event.data.account }}"
+              account_name: "{{ trigger.event.data.account_name }}"
+              balance: "{{ trigger.event.data.balance }}"
+              limit: "{{ trigger.event.data.limit }}"
+              hot_balance: "{{ trigger.event.data.hot_balance }}"
+              buffet_balance: "{{ trigger.event.data.buffet_balance }}"
               notification_title: !input meal_title_template
               notification_message: !input meal_message_template
           - choose: []

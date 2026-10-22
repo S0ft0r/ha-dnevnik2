@@ -26,7 +26,7 @@
         "default": "mdi:silverware-fork-knife"
       },
       "meal_buffet_balance": {
-        "default": "mdi:food-croissant"
+        "default": "mdi:cup"
       }
     },
     "number": {

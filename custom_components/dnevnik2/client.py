@@ -314,6 +314,10 @@ class Dnevnik2Client:
             "last_auth_failure": dict(self._last_auth_failure_diag),
         }
 
+    def replace_session(self, session: ClientSession) -> None:
+        """Заменяет HTTP-сессию клиента на свежую при сбросе пула соединений."""
+        self._session = session
+
     def set_token(self, token: str) -> None:
         """Обновляет токен в памяти клиента."""
         cleaned = extract_jwt_token(token) or token.strip()
@@ -333,6 +337,7 @@ class Dnevnik2Client:
             "Accept-Charset": "UTF-8",
             "X-Requested-With": "XMLHttpRequest",
             "Referer": f"{BASE_URL}/schedule",
+            "Connection": "close",
         }
         tok = token_override if token_override is not None else self._token
         if include_auth and tok:
@@ -662,16 +667,6 @@ class Dnevnik2Client:
         _retried_esia: bool = False,
     ) -> dict[str, Any]:
         """Выполняет GET-запрос к API дневника со скользящим и SSO-обновлением X-JWT-Token."""
-        if (
-            include_auth
-            and not self._in_esia_refresh
-            and not _retried_esia
-            and self._token
-        ):
-            cur_exp, _ = jwt_exp_iat(self._token)
-            if cur_exp > 0 and time.time() >= cur_exp:
-                await self.async_refresh_via_esia_esk()
-
         url = f"{BASE_URL}{path}"
         self._clear_session_cookie_jar()
         try:
@@ -826,11 +821,11 @@ class Dnevnik2Client:
         return await self._request(EP_CURRENT_USER)
 
     async def async_keep_alive(self) -> bool:
-        """Фоновый пинг сессии и упреждающее SSO-продление 8-минутного X-JWT-Token через esk."""
+        """Фоновый пинг сессии (раз в 4 мин.) и SSO-продление 8-минутного X-JWT-Token через esk."""
+        prev_tok = self._token
         try:
             await self._request(EP_RELATED_CHILDREN, params={"p_page": "1"})
-            cur_exp, _ = jwt_exp_iat(self._token)
-            if cur_exp > 0 and time.time() >= cur_exp - 270:
+            if self._token == prev_tok:
                 await self.async_refresh_via_esia_esk()
             return True
         except Dnevnik2Error:

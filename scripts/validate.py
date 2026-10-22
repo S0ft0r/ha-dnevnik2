@@ -239,11 +239,24 @@ def check_translations_and_icons() -> None:
         if platform not in ru_entities:
             fail(f"icons.json: платформа '{platform}' отсутствует в translations/ru.json -> entity")
             continue
-        for ent_key in items:
+        for ent_key, ent_cfg in items.items():
             if ent_key not in ru_entities[platform]:
                 fail(
                     f"icons.json: сущность 'entity.{platform}.{ent_key}' отсутствует в translations/ru.json"
                 )
+            if isinstance(ent_cfg, dict):
+                default_icon = ent_cfg.get("default")
+                if isinstance(default_icon, str) and not default_icon.startswith("mdi:"):
+                    fail(
+                        f"icons.json: hassfest требует префикс 'mdi:' в 'entity.{platform}.{ent_key}.default', получено: {default_icon!r}"
+                    )
+                state_icons = ent_cfg.get("state")
+                if isinstance(state_icons, dict):
+                    for st_key, st_icon in state_icons.items():
+                        if isinstance(st_icon, str) and not st_icon.startswith("mdi:"):
+                            fail(
+                                f"icons.json: hassfest требует префикс 'mdi:' в 'entity.{platform}.{ent_key}.state.{st_key}', получено: {st_icon!r}"
+                            )
 
 
 def check_python_files() -> None:

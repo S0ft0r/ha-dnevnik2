@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 from pathlib import Path
+import socket
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -241,14 +242,7 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
         )
         token = str(entry.data.get(CONF_TOKEN, ""))
         fallback_token = str(entry.data.get(CONF_FALLBACK_TOKEN, "") or token)
-        clear_petersburgedu_cookies(
-            async_get_clientsession(hass, verify_ssl=False)
-        )
-        session = async_create_clientsession(
-            hass,
-            verify_ssl=False,
-            cookie_jar=DummyCookieJar(),
-        )
+        session = self._make_http_session()
         self.client = Dnevnik2Client(
             session=session,
             token=token,
@@ -262,6 +256,19 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
             _LOGGER,
             name=f"{DOMAIN}_{entry.entry_id}",
             update_interval=timedelta(minutes=scan_minutes),
+        )
+
+    @callback
+    def _make_http_session(self):
+        """Создаёт чистую изолированную IPv4 HTTP-сессию без кэширования чужих cookie."""
+        clear_petersburgedu_cookies(
+            async_get_clientsession(self.hass, verify_ssl=False)
+        )
+        return async_create_clientsession(
+            self.hass,
+            verify_ssl=False,
+            family=socket.AF_INET,
+            cookie_jar=DummyCookieJar(),
         )
 
     @property
@@ -471,12 +478,16 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
         """Опрашивает API дневника и обновляет данные по каждому ученику."""
         try:
             children_raw = await self.client.async_get_children()
-        except Dnevnik2AuthError as err:
-            raise ConfigEntryAuthFailed(
-                self.tr_common("error_auth_expired")
-            ) from err
-        except Dnevnik2ConnectionError as err:
-            raise UpdateFailed(str(err)) from err
+        except (Dnevnik2AuthError, Dnevnik2ConnectionError):
+            self.client.replace_session(self._make_http_session())
+            try:
+                children_raw = await self.client.async_get_children()
+            except Dnevnik2AuthError as err:
+                raise ConfigEntryAuthFailed(
+                    self.tr_common("error_auth_expired")
+                ) from err
+            except Dnevnik2ConnectionError as err:
+                raise UpdateFailed(str(err)) from err
 
         students = self._parse_students(children_raw, [])
         if any(not st.institution_name for st in students.values()):
