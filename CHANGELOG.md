@@ -4,7 +4,37 @@
 
 ---
 
-## [0.1.16] — 22/10/2026
+## [0.1.21] — 22/10/2026
+
+### 📊 Сводка всех полученных за сегодня оценок в атрибутах `last_grade` (`0.1.21`)
+* **Атрибуты `today_count`, `today_text` и `today_grades` на сенсоре «Последняя оценка» (`manager.py`, `translations/{ru,en}.json`, `README.md`):**
+  * В атрибуты `sensor.<учащийся>_last_grade` добавлен учёт всех оценок за текущий день (`today_count` — количество оценок за сегодня, `today_text` — готовый многострочный список вида `• Алгебра: 5 (Ответ на уроке)`, `today_grades` — массив объектов `{value, subject, date, work_type, comment}`).
+  * Учитываются как оценки, выставленные за сегодняшнюю дату урока, так и оценки, появившиеся в течение сегодняшнего дня за прошлые уроки.
+
+### 🩺 Ссылка «Скачать диагностику» на карточке каждого устройства (`0.1.20`)
+* **Диагностика уровня устройства `async_get_device_diagnostics` (`diagnostics.py`):**
+  * По аналогии с `orry`, кроме диагностики всей записи конфигурации (`async_get_config_entry_diagnostics`) добавлена функция `async_get_device_diagnostics(hass, entry, device)`, благодаря чему ссылка **«Скачать диагностику»** отображается прямо в блоке «Информация об устройстве» на карточке основного устройства и каждого подустройства учащегося (с автоматическим маскированием токена, ФИО, ID учащегося и учителей).
+
+### 🔒 Защита исходного `X-JWT-Token` от перезаписи заголовками `Set-Cookie` (`0.1.19`)
+* **Отключена перезапись сохранённого токена из `Set-Cookie` в сочетании с `DummyCookieJar` (`client.py`, `manager.py`):**
+  * В версиях `0.1.16`–`0.1.18` возврат чтения `Set-Cookie: X-JWT-Token` снова приводил к тому, что промежуточные эндпоинты портала присылали гостевой/сброшенный `Set-Cookie: X-JWT-Token` (`userId: null`), который перезаписывал рабочий токен в `ConfigEntry.data` и вызывал ошибку авторизации сразу при следующем перезапуске.
+  * Теперь используются одновременно три механизма (по аналогии с `SPBplus-dnevnik` и `newtover/dnevnik`):
+    1. Исходный `X-JWT-Token`, полученный пользователем при входе через ЕСИА, **никогда не перезаписывается** заголовками `Set-Cookie` из ответов API.
+    2. Запросы выполняются через изолированную сессию `DummyCookieJar()` (с полной очисткой домена `petersburgedu.ru` без ведущей точки в общем `CookieJar` Home Assistant), поэтому `aiohttp` не может подменить заголовок `Cookie` ни сразу, ни через 30 минут.
+    3. Фоновый пинг `/api/journal/person/related-child-list` каждые 4 минуты поддерживает активность сессии на сервере без модификации самого токена.
+
+### 📝 Перенос длинных строк заданий и уроков в панели «Списки дел» (`0.1.18`)
+* **Многострочный вывод элементов в `hui-todo-list-card` и `ha-check-list-item` (`frontend/dnevnik2-icons.js`, `__init__.py`):**
+  * По аналогии с переносом длинных имён сущностей в `hui-generic-entity-row`, модуль `dnevnik2-icons.js` теперь инжектирует CSS-правила переноса строк (`white-space: pre-wrap / normal`, `overflow-wrap: anywhere`, `word-break: break-word`) в Shadow DOM карточки `hui-todo-list-card` (`.summary`, `.column`) и каждого элемента `ha-check-list-item` (`.mdc-deprecated-list-item__text`) только для списков интеграции `dnevnik2`.
+  * При перезагрузке интеграции (`__init__.py`) автоматически обновляется URL-версия `?v={mtime}` скрипта `dnevnik2-icons.js`, чтобы браузер подхватывал обновлённый фронтенд без перезапуска Home Assistant.
+
+### 🛡️ Изолированная сессия `DummyCookieJar` и отбор скользящего `X-JWT-Token` по `exp`/`iat` (`0.1.17`)
+* **Устранена перезапись заголовка `Cookie` старым 30-минутным токеном из `aiohttp.CookieJar` (`client.py`, `manager.py`, `config_flow.py`):**
+  * Найдена точная причина отвала ровно через 30 минут (`14:15:35` → `14:45:35`): при получении `Set-Cookie: X-JWT-Token=...; domain=.petersburgedu.ru; path=/` встроенный `aiohttp.CookieJar` отбрасывает ведущую точку и сохраняет cookie под ключом `Domain=petersburgedu.ru`. Вызов `jar.clear_domain(".petersburgedu.ru")` с ведущей точкой не удалял эту запись, из-за чего `aiohttp` (`ClientRequest.update_cookies`) на каждом следующем запросе **перезаписывал** заголовок `headers["Cookie"]` старым 30-минутным токеном из `CookieJar`, полностью игнорируя обновлённый `self._token`.
+  * Клиент `Dnevnik2Client` переведён на изолированную сессию `async_create_clientsession(..., cookie_jar=DummyCookieJar())`, которая вообще не хранит `Set-Cookie` в `CookieJar`, а функция `clear_petersburgedu_cookies()` принудительно вычищает старые записи из общего `CookieJar` Home Assistant (включая `petersburgedu.ru` без точки и очистку по предикату `jar.clear(...)`).
+  * При получении нескольких заголовков `Set-Cookie: X-JWT-Token` декодируются поля `exp` и `iat` из JWT-payload (`jwt_exp_iat`), чтобы всегда выбирать самый свежий токен и никогда не заменять `self._token` токеном с меньшим `exp`.
+* **Документация и готовый проект (Blueprint) (`0.1.17`):**
+  * В репозиторий добавлен проект автоматизации [`blueprint/ha_notifications.yaml`](blueprint/ha_notifications.yaml) и векторные SVG-иконки сущностей в [`docs/icons/`](docs/icons/) для отображения в таблицах `README.md`.
 
 ### 🔄 Фоновое поддержание сессии (Keep-Alive раз в 4 мин.) и скользящая ротация `X-JWT-Token` (`0.1.16`)
 * **Фоновый пинг сессии каждые 4 минуты (`__init__.py`, `manager.py`, `client.py`, `const.py`):**

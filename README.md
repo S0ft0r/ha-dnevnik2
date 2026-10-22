@@ -7,12 +7,12 @@
   </picture>
 </p>
 
-[![Version](https://img.shields.io/badge/version-0.1.16-blue.svg)](https://github.com/S0ft0r/ha-dnevnik2)
+[![Version](https://img.shields.io/badge/version-0.1.21-blue.svg)](https://github.com/S0ft0r/ha-dnevnik2)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2026.8%2B-41BDF5.svg)](https://www.home-assistant.io/)
 
 **История изменений:** [CHANGELOG.md](CHANGELOG.md)
 
-**Версия:** 0.1.16  
+**Версия:** 0.1.21  
 **Домен интеграции:** `dnevnik2`
 
 Кастомная интеграция для подключения портала **«Петербургское образование. Электронный дневник»** (`https://dnevnik2.petersburgedu.ru`) к **Home Assistant**.
@@ -36,20 +36,20 @@
 
 ### На основном устройстве аккаунта
 | Сущность | Платформа | Иконка | Описание |
-| :--- | :---: | :---: | :--- |
-| **Учащихся в профиле** (`account_status`) | `sensor` | `mdi:school` | Количество привязанных учащихся и их список в атрибутах |
-| **Обновить данные** (`refresh`) | `button` | `mdi:database-sync` | Внеочередной опрос API дневника |
+| :--- | :---: | :--- | :--- |
+| **Учащихся в профиле** (`account_status`) | `sensor` | <img src="docs/icons/mdi-school.svg" width="22" height="22" align="absmiddle"> `mdi:school` | Количество привязанных учащихся и их список в атрибутах |
+| **Обновить данные** (`refresh`) | `button` | <img src="docs/icons/mdi-database-sync.svg" width="22" height="22" align="absmiddle"> `mdi:database-sync` | Внеочередной опрос API дневника |
 
 ### На подустройстве каждого учащегося
 | Сущность | Платформа | Иконка | Описание |
-| :--- | :---: | :---: | :--- |
-| **Средний балл** (`average_grade`) | `sensor` | `dnevnik2:grade-avg` | Средний балл за период + средние баллы по предметам, число оценок, пропусков (`30000`) и опозданий (`30001`) в атрибутах |
-| **Последняя оценка** (`last_grade`) | `sensor` | `mdi:numeric-{1..5}-box-outline` | Последняя полученная оценка (предмет, дата, тип работы, комментарий) |
-| **Домашние задания** (`homework`) | `todo` или `sensor` | `dnevnik2:homework` / `dnevnik2:homework-done` | По выбору в настройках: интерактивный список дел (`todo`) с датами сдачи (`due`) и галочками «Выполнено» **или** числовой `sensor` с готовым многострочным атрибутом `text` / `uncompleted_text` |
-| **Расписание уроков / Уроков сегодня** (`lessons_today`) | `todo` или `sensor` | `dnevnik2:schedule` | По выбору в настройках: интерактивный список дел (`todo`) с временем, кабинетами и учителями **или** числовой `sensor` с готовым многострочным атрибутом `text` |
-| **Последний проход через турникет** (`turnstile_last`) | `sensor` | `dnevnik2:turnstile-clock` | Время последнего события СКУД школы и журнал последних проходов |
-| **В школе** (`at_school`) | `binary_sensor` | `mdi:school` / `dnevnik2:school-off` | Индикатор нахождения в здании школы по данным турникета СКУД |
-| **Баланс питания** (`meal_balance`) | `sensor` | `dnevnik2:meal-balance` | Остаток средств на счетах школьного питания (`₽`) + разбивка по счетам («Горячее питание», «Буфет») в атрибутах |
+| :--- | :---: | :--- | :--- |
+| **Средний балл** (`average_grade`) | `sensor` | <img src="docs/icons/dnevnik2-grade-avg.svg" width="22" height="22" align="absmiddle"> `dnevnik2:grade-avg` | Средний балл за период + средние баллы по предметам, число оценок, пропусков (`30000`) и опозданий (`30001`) в атрибутах |
+| **Последняя оценка** (`last_grade`) | `sensor` | <img src="docs/icons/mdi-numeric-5-box-outline.svg" width="22" height="22" align="absmiddle"> `mdi:numeric-{1..5}-box-outline` | Последняя полученная оценка (предмет, дата, тип работы, комментарий) + все оценки за сегодня (`today_count`, `today_text`, `today_grades`) в атрибутах |
+| **Домашние задания** (`homework`) | `todo` или `sensor` | <img src="docs/icons/dnevnik2-homework.svg" width="22" height="22" align="absmiddle"> `dnevnik2:homework`<br><img src="docs/icons/dnevnik2-homework-done.svg" width="22" height="22" align="absmiddle"> `dnevnik2:homework-done` | По выбору в настройках: интерактивный список дел (`todo`) с датами сдачи (`due`) и галочками «Выполнено» **или** числовой `sensor` с готовым многострочным атрибутом `text` / `uncompleted_text` |
+| **Расписание уроков / Уроков сегодня** (`lessons_today`) | `todo` или `sensor` | <img src="docs/icons/dnevnik2-schedule.svg" width="22" height="22" align="absmiddle"> `dnevnik2:schedule` | По выбору в настройках: интерактивный список дел (`todo`) с временем, кабинетами и учителями **или** числовой `sensor` с готовым многострочным атрибутом `text` |
+| **Последний проход через турникет** (`turnstile_last`) | `sensor` | <img src="docs/icons/dnevnik2-turnstile-clock.svg" width="22" height="22" align="absmiddle"> `dnevnik2:turnstile-clock` | Время последнего события СКУД школы и журнал последних проходов |
+| **В школе** (`at_school`) | `binary_sensor` | <img src="docs/icons/mdi-school.svg" width="22" height="22" align="absmiddle"> `mdi:school`<br><img src="docs/icons/dnevnik2-school-off.svg" width="22" height="22" align="absmiddle"> `dnevnik2:school-off` | Индикатор нахождения в здании школы по данным турникета СКУД |
+| **Баланс питания** (`meal_balance`) | `sensor` | <img src="docs/icons/dnevnik2-meal-balance.svg" width="22" height="22" align="absmiddle"> `dnevnik2:meal-balance` | Остаток средств на счетах школьного питания (`₽`) + разбивка по счетам («Горячее питание», «Буфет») в атрибутах |
 
 ---
 
