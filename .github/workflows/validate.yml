@@ -1,0 +1,50 @@
+name: Validate
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 0 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  validate-local:
+    name: Local Validator & Syntax Check
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Run integration validator
+        run: python3 scripts/validate.py
+
+  hassfest:
+    name: Hassfest Validation
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Run Hassfest
+        uses: home-assistant/actions/hassfest@master
+
+  # Примечание: job hacs/action@main пока отключён (для приватного репозитория или до публикации в HACS).
+  # Полная проверка hacs.json, manifest.json, переводов и иконок выполняется локально в job validate-local (scripts/validate.py).
+  # При публикации в HACS блок ниже можно раскомментировать:
+  #
+  # hacs:
+  #   name: HACS Validation
+  #   runs-on: ubuntu-24.04
+  #   steps:
+  #     - name: Run HACS validation
+  #       uses: hacs/action@main
+  #       with:
+  #         category: integration

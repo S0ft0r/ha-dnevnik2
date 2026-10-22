@@ -1,0 +1,74 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Тег релиза (например, v0.1.14)"
+        required: true
+        default: "v0.1.14"
+      prerelease:
+        description: "Отметить как Pre-release (альфа/бета)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Publish Release Archive
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Validate integration before packaging
+        run: python3 scripts/validate.py
+
+      - name: Build dnevnik2.zip archive
+        run: |
+          cd custom_components
+          zip -r ../dnevnik2.zip dnevnik2 -x "*/__pycache__/*" "*.pyc" "*.pyo"
+
+      - name: Extract latest release notes from CHANGELOG.md
+        run: |
+          python3 - <<'EOF'
+          from pathlib import Path
+          import re
+
+          pattern = r"(^## \[.*?)(?=^---|\Z|^## \[)"
+          ru_text = Path("CHANGELOG.md").read_text(encoding="utf-8")
+          ru_match = re.search(pattern, ru_text, flags=re.MULTILINE | re.DOTALL)
+          ru_notes = ru_match.group(1).strip() if ru_match else "Автоматическая сборка релиза."
+          Path("release_notes.md").write_text(ru_notes + "\n", encoding="utf-8")
+          EOF
+
+      - name: Create or Update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          IS_PRERELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || contains(github.ref_name, '-') }}
+        run: |
+          PRERELEASE_FLAG=""
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dnevnik2.zip --clobber
+            gh release edit "$TAG" --notes-file release_notes.md
+          else
+            gh release create "$TAG" dnevnik2.zip \
+              --target "${{ github.sha }}" \
+              --title "Электронный дневник СПб $TAG" \
+              --notes-file release_notes.md \
+              $PRERELEASE_FLAG
+          fi
