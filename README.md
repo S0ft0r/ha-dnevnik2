@@ -1,4 +1,4 @@
-# 🎓 Электронный дневник СПб (`dnevnik2`) — Интеграция для Home Assistant
+# Электронный дневник СПб (`dnevnik2`) — Интеграция для Home Assistant
 
 <p align="center">
   <picture>
@@ -10,7 +10,7 @@
 [![Version](https://img.shields.io/badge/version-0.1.16-blue.svg)](https://github.com/S0ft0r/ha-dnevnik2)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2026.8%2B-41BDF5.svg)](https://www.home-assistant.io/)
 
-📋 **История изменений:** [CHANGELOG.md](CHANGELOG.md)
+**История изменений:** [CHANGELOG.md](CHANGELOG.md)
 
 **Версия:** 0.1.16  
 **Домен интеграции:** `dnevnik2`
@@ -19,7 +19,7 @@
 
 ---
 
-## ✨ Основные возможности
+## Основные возможности
 
 1. **Двухшаговый мастер подключения через Госуслуги (ЕСИА):**
    * **Шаг 1 (`Авторизация`):** интеграция автоматически запрашивает актуальную ссылку входа ЕСИА (`GET /api/journal/esa/login-url`), выводит пошаговую инструкцию и определяет, открыта ли настройка с компьютера или из мобильного приложения Home Assistant Companion. Достаточно один раз войти в браузере и вставить cookie `X-JWT-Token` (`eyJ...`).
@@ -32,7 +32,7 @@
 
 ---
 
-## 🧩 Создаваемые сущности
+## Создаваемые сущности
 
 ### На основном устройстве аккаунта
 | Сущность | Платформа | Иконка | Описание |
@@ -53,17 +53,17 @@
 
 ---
 
-## 🚀 Установка и настройка
+## Установка и настройка
 
 1. Скопируйте папку `custom_components/dnevnik2` в директорию `config/custom_components/` вашего Home Assistant.
 2. Перезапустите Home Assistant.
 3. Перейдите в **Настройки → Устройства и службы → Добавить интеграцию** и выберите **Электронный дневник СПб**.
-4. **Шаг 1 из 2:** откройте предложенную ссылку входа через Госуслуги (ЕСИА) в браузере на компьютере, после входа нажмите `F12` → вкладка `Application` (`Приложение`) → `Cookies` → `https://dnevnik2.petersburgedu.ru`, скопируйте значение `X-JWT-Token` (`eyJ...`) и вставьте в поле.
+4. **Шаг 1 из 2:** откройте предложенную ссылку входа через Госуслуги (ЕСИА) в браузере на компьютере, после входа нажмите `F12` (или `Ctrl+Shift+I`) → вкладка `Application` (`Приложение`) → `Cookies` → `https://dnevnik2.petersburgedu.ru`, скопируйте значение `X-JWT-Token` (`eyJ...`) и вставьте в поле.
 5. **Шаг 2 из 2:** проверьте список найденных учащихся и выберите формат вывода домашних заданий и расписания уроков (`Список дел (To-do)` или `Сенсор с текстовым атрибутом`).
 
 ---
 
-## 🔔 События (Events) и автоматизации уведомлений
+## События (Events) и автоматизации уведомлений
 
 При каждом обновлении данных интеграция сравнивает предыдущее и новое состояние по каждому учащемуся и отправляет события в шину Home Assistant (`hass.bus`):
 
@@ -85,7 +85,21 @@
 * `text` — многострочный список всех заданий или уроков на сегодня;
 * `first_name` — имя учащегося (`Александр`).
 
-### Пример автоматизации уведомления о новой оценке
+### Готовый проект автоматизации (Blueprint)
+
+В репозитории доступен готовый проект автоматизации (Blueprint) — [**`blueprint/ha-notifications.yaml`**](blueprint/ha-notifications.yaml), который включает в себя:
+* уведомления о новых оценках с раздельными шаблонами текста для хороших (`4–5`) и низких (`2–3`) оценок;
+* уведомления о входе и выходе учащегося через турникет школы;
+* вечернее напоминание о невыполненных домашних заданиях (работает и с `todo.*`, и с `sensor.*`);
+* оповещение о снижении баланса школьного питания ниже заданного порога.
+
+[![Импортировать проект в Home Assistant](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FS0ft0r%2Fha-dnevnik2%2Fblob%2Fmain%2Fblueprint%2Fha-notifications.yaml)
+
+**Как подключить проект вручную:**
+1. Скопируйте файл [`blueprint/ha-notifications.yaml`](blueprint/ha-notifications.yaml) в папку `config/blueprints/automation/dnevnik2/` вашего Home Assistant (или в разделе **Настройки → Автоматизации и сцены → Проекты → Импортировать проект** укажите ссылку `https://github.com/S0ft0r/ha-dnevnik2/blob/main/blueprint/ha-notifications.yaml`).
+2. Создайте автоматизацию на основе этого проекта, при необходимости отредактируйте тексты сообщений и укажите сервис отправки уведомлений, передав в него переменные `{{ notification_title }}` и `{{ notification_message }}`.
+
+### Пример простой автоматизации без проекта (YAML)
 ```yaml
 automation:
   - alias: "Дневник СПб: Уведомление о новой оценке"
@@ -95,19 +109,9 @@ automation:
     action:
       - action: persistent_notification.create
         data:
-          title: "🎓 {{ trigger.event.data.first_name }}: {{ trigger.event.data.value }} по предмету {{ trigger.event.data.subject }}"
+          title: "{{ trigger.event.data.first_name }}: {{ trigger.event.data.value }} по предмету {{ trigger.event.data.subject }}"
           message: >
             Тип работы: {{ trigger.event.data.work_type }}.
             {% if trigger.event.data.comment %}Комментарий: {{ trigger.event.data.comment }}.{% endif %}
             Средний балл: {{ trigger.event.data.average_grade }}.
 ```
-
----
-
-## 🧪 Локальная валидация перед коммитом
-
-```bash
-python3 scripts/validate.py
-```
-
-Скрипт проверяет структуру `manifest.json` (алфавитный порядок ключей для `hassfest`), `hacs.json`, наличие `LICENSE` и брендовых иконок `brand/`, полную синхронизацию `translations/ru.json` и `translations/en.json`, `icons.json`, отсутствие захардкоженных русских строк в Python-файлах и синтаксис AST всех модулей.
