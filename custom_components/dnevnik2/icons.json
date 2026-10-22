@@ -4,6 +4,15 @@
       "account_status": {
         "default": "mdi:school"
       },
+      "connection_status": {
+        "default": "mdi:cloud-check-outline",
+        "state": {
+          "ok": "mdi:cloud-check-outline",
+          "portal_error": "mdi:cloud-alert-outline",
+          "timeout": "mdi:cloud-clock-outline",
+          "auth_expired": "mdi:key-alert-outline"
+        }
+      },
       "average_grade": {
         "default": "mdi:chart-line"
       },

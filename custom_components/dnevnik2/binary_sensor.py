@@ -27,7 +27,7 @@ async def async_setup_entry(
     coordinator: Dnevnik2Coordinator = hass.data[DOMAIN][entry.entry_id]
     async_add_entities(
         Dnevnik2AtSchoolBinarySensor(coordinator, entry, edu_id)
-        for edu_id in coordinator.students
+        for edu_id in coordinator.known_students
     )
 
 
@@ -57,7 +57,7 @@ class Dnevnik2AtSchoolBinarySensor(
         self._attr_unique_id = (
             f"{entry.entry_id}_student_{education_id}_at_school"
         )
-        student = coordinator.students.get(education_id)
+        student = coordinator.known_students.get(education_id)
         if student is not None:
             self._attr_device_info = DeviceInfo(
                 **coordinator.device_info_for_student(student)

@@ -6,6 +6,7 @@ from __future__ import annotations
 import ast
 import json
 import re
+import struct
 import sys
 from pathlib import Path
 
@@ -41,6 +42,14 @@ ALLOWED_HACS_KEYS = {
     "filename",
     "country",
     "content_in_root",
+    "render_readme",
+}
+
+ALLOWED_BRAND_FILES = {
+    "icon.png": (256, 256),
+    "icon@2x.png": (512, 512),
+    "dark_icon.png": (256, 256),
+    "dark_icon@2x.png": (512, 512),
 }
 
 errors: list[str] = []
@@ -107,9 +116,9 @@ def check_manifest() -> None:
 
 
 def check_hacs_json() -> None:
-    license_path = ROOT / "LICENSE"
-    if not license_path.is_file():
-        fail("Не найден файл LICENSE в корне репозитория (требуется для HACS)")
+    for req_file in ("LICENSE", "README.md", "CHANGELOG.md"):
+        if not (ROOT / req_file).is_file():
+            fail(f"Не найден обязательный файл {req_file} в корне репозитория (требуется для HACS)")
 
     hacs_path = ROOT / "hacs.json"
     if not hacs_path.is_file():
@@ -122,22 +131,92 @@ def check_hacs_json() -> None:
         fail(f"hacs.json: ошибка JSON: {exc}")
         return
 
-    if "name" not in data:
-        fail("hacs.json: отсутствует обязательный ключ 'name'")
+    if not isinstance(data, dict):
+        fail("hacs.json: корень должен быть JSON-объектом")
+        return
+
+    if not isinstance(data.get("name"), str) or not data["name"].strip():
+        fail("hacs.json: отсутствует обязательный строковый ключ 'name'")
 
     unknown = set(data.keys()) - ALLOWED_HACS_KEYS
     if unknown:
         fail(f"hacs.json: неподдерживаемые/устаревшие ключи HACS: {sorted(unknown)}")
 
+    if data.get("zip_release") and not data.get("filename"):
+        fail("hacs.json: при zip_release=true обязателен ключ 'filename'")
+
+    country = data.get("country")
+    if country is not None:
+        countries = [country] if isinstance(country, str) else country
+        if not isinstance(countries, list) or not all(
+            isinstance(c, str) and len(c) == 2 and c.isupper() for c in countries
+        ):
+            fail(f"hacs.json: 'country' должен быть двухбуквенным ISO-кодом в верхнем регистре, получено: {country!r}")
+
+    wf_validate = ROOT / ".github" / "workflows" / "validate.yml"
+    if not wf_validate.is_file():
+        fail("Не найден .github/workflows/validate.yml")
+    else:
+        wf_text = wf_validate.read_text(encoding="utf-8")
+        if "hacs/action@" not in wf_text or "category: integration" not in wf_text:
+            fail(".github/workflows/validate.yml: должна быть включена проверка hacs/action с category: integration")
+        if "home-assistant/actions/hassfest@" not in wf_text:
+            fail(".github/workflows/validate.yml: должна быть включена проверка hassfest")
+
+
+def _read_png_dimensions(path: Path) -> tuple[int, int] | None:
+    raw = path.read_bytes()
+    if len(raw) < 24 or raw[:8] != b"\x89PNG\r\n\x1a\n" or raw[12:16] != b"IHDR":
+        return None
+    w, h = struct.unpack(">II", raw[16:24])
+    return int(w), int(h)
+
 
 def check_brand_assets() -> None:
     brand_dir = COMP_DIR / "brand"
+    if not brand_dir.is_dir():
+        fail(f"Отсутствует директория custom_components/{DOMAIN}/brand/ (требуется для HACS и HA 2026.3+)")
+        return
+
     icon_1x = brand_dir / "icon.png"
     icon_2x = brand_dir / "icon@2x.png"
     if not icon_1x.is_file():
         fail(f"Отсутствует custom_components/{DOMAIN}/brand/icon.png (требуется для HACS и HA 2026.3+)")
     if not icon_2x.is_file():
         warn(f"Рекомендуется добавить custom_components/{DOMAIN}/brand/icon@2x.png (512x512)")
+
+    for item in sorted(brand_dir.iterdir()):
+        if item.name.startswith("."):
+            continue
+        if item.name not in ALLOWED_BRAND_FILES:
+            fail(
+                f"custom_components/{DOMAIN}/brand/{item.name}: недопустимый файл в brand/ "
+                f"(разрешены только {sorted(ALLOWED_BRAND_FILES)})"
+            )
+            continue
+        dims = _read_png_dimensions(item)
+        expected_dims = ALLOWED_BRAND_FILES[item.name]
+        if dims != expected_dims:
+            fail(
+                f"custom_components/{DOMAIN}/brand/{item.name}: ожидался PNG {expected_dims[0]}x{expected_dims[1]}, "
+                f"получено {dims}"
+            )
+
+
+def check_docs_icons() -> None:
+    readme_path = ROOT / "README.md"
+    if not readme_path.is_file():
+        return
+    readme_text = readme_path.read_text(encoding="utf-8")
+    referenced = set(re.findall(r"docs/icons/[a-zA-Z0-9_-]+\.svg", readme_text))
+    for rel in sorted(referenced):
+        svg_path = ROOT / rel
+        if not svg_path.is_file():
+            fail(f"README.md ссылается на отсутствующую иконку {rel}")
+            continue
+        svg_text = svg_path.read_text(encoding="utf-8")
+        if "#44739E" not in svg_text or "#41BDF5" not in svg_text:
+            fail(f"{rel}: иконка должна содержать цвета #44739E (light) и #41BDF5 (dark)")
 
 
 def _collect_keys(obj: dict, prefix: str = "") -> dict[str, str]:
@@ -365,6 +444,7 @@ def main() -> int:
     check_manifest()
     check_hacs_json()
     check_brand_assets()
+    check_docs_icons()
     check_translations_and_icons()
     check_python_files()
 

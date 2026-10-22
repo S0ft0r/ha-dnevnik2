@@ -86,6 +86,15 @@
       },
       "meal_buffet_balance": {
         "name": "Буфет"
+      },
+      "connection_status": {
+        "name": "Статус сессии",
+        "state": {
+          "ok": "Активна",
+          "portal_error": "Сбой портала (5xx)",
+          "timeout": "Таймаут соединения",
+          "auth_expired": "Токен истёк"
+        }
       }
     },
     "todo": {

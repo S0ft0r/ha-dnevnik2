@@ -225,10 +225,11 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
         self.main_device_id: str | None = None
         self.student_device_ids: dict[str, str] = {}
         self._translations: dict[str, Any] = {}
-        self._todo_store: Store[dict[str, list[str]]] = Store(
+        self._todo_store: Store[dict[str, Any]] = Store(
             hass, STORAGE_VERSION, f"{DOMAIN}_todo_{entry.entry_id}"
         )
         self._completed_uids: set[str] = set()
+        self._cached_students: dict[str, StudentData] = {}
         self._previous_students: dict[str, StudentData] | None = None
         self._known_grade_uids: dict[str, set[str]] = {}
         self._detected_today_grades: dict[tuple[str, date], list[dict[str, Any]]] = {}
@@ -344,7 +345,11 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
 
     async def async_keep_alive_tick(self, _now: datetime | None = None) -> None:
         """Периодический фоновый пинг портала (раз в 4 мин.) для поддержания скользящей сессии."""
-        await self.client.async_keep_alive()
+        ok = await self.client.async_keep_alive()
+        if ok and not self.last_update_success:
+            await self.async_request_refresh()
+        else:
+            self.async_update_listeners()
 
     async def async_init_translations(self) -> None:
         """Асинхронно загружает локализацию и сохранённые отметки выполненных элементов Todo."""
@@ -371,16 +376,53 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
                 saved_diag = stored.get("token_diagnostics")
                 if isinstance(saved_diag, dict):
                     self.client.restore_diagnostics(saved_diag)
+                saved_students = stored.get("students_meta")
+                if isinstance(saved_students, list):
+                    for item in saved_students:
+                        if not isinstance(item, dict):
+                            continue
+                        edu_id = str(item.get("education_id") or "").strip()
+                        if not edu_id:
+                            continue
+                        self._cached_students[edu_id] = StudentData(
+                            education_id=edu_id,
+                            person_id=str(item.get("person_id") or edu_id),
+                            full_name=str(item.get("full_name") or f"#{edu_id}"),
+                            short_name=str(item.get("short_name") or f"#{edu_id}"),
+                            first_name=str(item.get("first_name") or f"#{edu_id}"),
+                            institution_name=str(
+                                item.get("institution_name") or ""
+                            ),
+                            group_name=str(item.get("group_name") or ""),
+                            group_id=item.get("group_id"),
+                            hash_uid=str(item.get("hash_uid") or ""),
+                        )
         except Exception as err:
             _LOGGER.debug("Todo store load skipped: %s", err)
 
     async def _async_persist_store(self) -> None:
-        """Сохраняет выполненные пункты Todo и актуальную диагностику токена на диск."""
+        """Сохраняет выполненные пункты Todo, метаданные учеников и диагностику токена на диск."""
         try:
+            active_students = self.data or self._cached_students
+            students_meta = [
+                {
+                    "education_id": st.education_id,
+                    "person_id": st.person_id,
+                    "full_name": st.full_name,
+                    "short_name": st.short_name,
+                    "first_name": st.first_name,
+                    "institution_name": st.institution_name,
+                    "group_name": st.group_name,
+                    "group_id": st.group_id,
+                    "hash_uid": st.hash_uid,
+                }
+                for st in active_students.values()
+            ]
             await self._todo_store.async_save(
                 {
                     "completed_uids": sorted(self._completed_uids),
                     "token_diagnostics": self.client.token_diagnostics,
+                    "students_meta": students_meta,
                 }
             )
         except Exception as err:
@@ -490,6 +532,11 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
         """Текущий словарь учеников по education_id."""
         return self.data or {}
 
+    @property
+    def known_students(self) -> dict[str, StudentData]:
+        """Словарь учеников (актуальный или восстановленный из кэша при сбое портала на старте)."""
+        return self.data or self._cached_students
+
     async def _async_update_data(self) -> dict[str, StudentData]:
         """Опрашивает API дневника и обновляет данные по каждому ученику."""
         try:
@@ -527,6 +574,8 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
                 period_end=period_end,
             )
 
+        self._cached_students = students
+        await self._async_persist_store()
         self._prune_completed_uids(students)
         if self._previous_students is not None:
             self._emit_change_events(self._previous_students, students)

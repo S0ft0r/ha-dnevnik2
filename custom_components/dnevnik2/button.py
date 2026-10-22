@@ -39,6 +39,11 @@ class Dnevnik2RefreshButton(
         self._attr_unique_id = f"{entry.entry_id}_refresh"
         self._attr_device_info = coordinator.device_info
 
+    @property
+    def available(self) -> bool:
+        """Кнопка ручного обновления всегда доступна, в том числе после сетевого сбоя."""
+        return True
+
     async def async_press(self) -> None:
         """Запускает немедленное обновление координатора."""
         await self.coordinator.async_request_refresh()

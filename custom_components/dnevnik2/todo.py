@@ -32,7 +32,7 @@ async def async_setup_entry(
     hw_as_todo = coordinator.homework_mode == OUTPUT_MODE_TODO
     lessons_as_todo = coordinator.lessons_mode == OUTPUT_MODE_TODO
 
-    for edu_id in coordinator.students:
+    for edu_id in coordinator.known_students:
         if hw_as_todo:
             entities.append(
                 Dnevnik2StudentHomeworkTodo(coordinator, entry, edu_id)
@@ -68,7 +68,7 @@ class _BaseStudentTodo(
         self._key = key
         self._attr_translation_key = key
         self._attr_unique_id = f"{entry.entry_id}_student_{education_id}_{key}"
-        student = coordinator.students.get(education_id)
+        student = coordinator.known_students.get(education_id)
         if student is not None:
             self._attr_device_info = DeviceInfo(
                 **coordinator.device_info_for_student(student)
@@ -80,7 +80,7 @@ class _BaseStudentTodo(
 
     def _todo_friendly_name(self) -> str | None:
         """Формирует friendly_name вида 'Александр - домашние задания' для панели 'Списки дел'."""
-        st = self._student
+        st = self._student or self.coordinator.known_students.get(self._edu_id)
         orig = self.name
         if st and isinstance(orig, str) and orig:
             lowered = orig[0].lower() + orig[1:]

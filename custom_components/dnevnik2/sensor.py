@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -16,8 +17,26 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, OUTPUT_MODE_SENSOR
-from .manager import Dnevnik2Coordinator, StudentData
+from .const import (
+    CONN_STATE_AUTH_EXPIRED,
+    CONN_STATE_PORTAL_ERROR,
+    CONN_STATE_TIMEOUT,
+    CONNECTION_STATES,
+    DOMAIN,
+    OUTPUT_MODE_SENSOR,
+    REQUEST_TIMEOUT_SEC,
+)
+from .manager import SPB_TZ, Dnevnik2Coordinator, StudentData
+
+
+def _fmt_unix_ts(ts: int | None) -> str | None:
+    """Форматирует Unix-время в читаемую ISO-строку часового пояса Санкт-Петербурга."""
+    if not ts:
+        return None
+    try:
+        return datetime.fromtimestamp(int(ts), tz=SPB_TZ).isoformat()
+    except Exception:
+        return None
 
 
 async def async_setup_entry(
@@ -25,16 +44,17 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Создаёт сенсор статуса на основном устройстве и набор сенсоров на подустройстве каждого ученика."""
+    """Создаёт сенсоры на основном устройстве и набор сенсоров на подустройстве каждого ученика."""
     coordinator: Dnevnik2Coordinator = hass.data[DOMAIN][entry.entry_id]
 
     entities: list[SensorEntity] = [
         Dnevnik2AccountStatusSensor(coordinator, entry),
+        Dnevnik2ConnectionStatusSensor(coordinator, entry),
     ]
     hw_as_sensor = coordinator.homework_mode == OUTPUT_MODE_SENSOR
     lessons_as_sensor = coordinator.lessons_mode == OUTPUT_MODE_SENSOR
 
-    for edu_id in coordinator.students:
+    for edu_id in coordinator.known_students:
         entities.extend(
             [
                 Dnevnik2AverageGradeSensor(coordinator, entry, edu_id),
@@ -95,6 +115,68 @@ class Dnevnik2AccountStatusSensor(
         }
 
 
+class Dnevnik2ConnectionStatusSensor(
+    CoordinatorEntity[Dnevnik2Coordinator], SensorEntity
+):
+    """Диагностический сенсор состояния сессии и соединения с порталом на основном устройстве."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "connection_status"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = CONNECTION_STATES
+
+    def __init__(
+        self, coordinator: Dnevnik2Coordinator, entry: ConfigEntry
+    ) -> None:
+        """Инициализация диагностического сенсора сессии."""
+        super().__init__(coordinator)
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_connection_status"
+        self._attr_device_info = coordinator.device_info
+
+    @property
+    def available(self) -> bool:
+        """Диагностический сенсор сессии всегда доступен, в том числе при сбоях портала."""
+        return True
+
+    @property
+    def native_value(self) -> str:
+        """Текущий статус соединения ('ok', 'portal_error', 'timeout', 'auth_expired')."""
+        return self.coordinator.client.connection_state
+
+    @property
+    def icon(self) -> str:
+        """Динамическая иконка состояния сессии."""
+        state = self.coordinator.client.connection_state
+        if state == CONN_STATE_PORTAL_ERROR:
+            return "mdi:cloud-alert-outline"
+        if state == CONN_STATE_TIMEOUT:
+            return "mdi:cloud-clock-outline"
+        if state == CONN_STATE_AUTH_EXPIRED:
+            return "mdi:key-alert-outline"
+        return "mdi:cloud-check-outline"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Подробные диагностические атрибуты сессии, токена и таймаутов."""
+        client = self.coordinator.client
+        diag = client.token_diagnostics
+        claims = diag.get("current_jwt_claims") or {}
+        return {
+            "last_success": _fmt_unix_ts(client.last_success_at),
+            "last_error": client.last_error_message,
+            "last_error_at": _fmt_unix_ts(client.last_error_at),
+            "http_status": client.last_http_status,
+            "token_issued_at": claims.get("iat_iso"),
+            "token_ttl_sec": claims.get("ttl_seconds"),
+            "has_sso_key": client.has_esk,
+            "sso_refreshes": client.sso_refreshes_count,
+            "scan_interval_min": self.coordinator.scan_interval_minutes,
+            "request_timeout_sec": REQUEST_TIMEOUT_SEC,
+        }
+
+
 class _BaseStudentSensor(
     CoordinatorEntity[Dnevnik2Coordinator], SensorEntity
 ):
@@ -115,7 +197,7 @@ class _BaseStudentSensor(
         self._edu_id = education_id
         self._attr_translation_key = key
         self._attr_unique_id = f"{entry.entry_id}_student_{education_id}_{key}"
-        student = coordinator.students.get(education_id)
+        student = coordinator.known_students.get(education_id)
         if student is not None:
             self._attr_device_info = DeviceInfo(
                 **coordinator.device_info_for_student(student)

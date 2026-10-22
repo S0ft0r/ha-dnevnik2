@@ -16,6 +16,10 @@ from aiohttp import ClientError, ClientResponse, ClientSession, ClientTimeout
 
 from .const import (
     BASE_URL,
+    CONN_STATE_AUTH_EXPIRED,
+    CONN_STATE_OK,
+    CONN_STATE_PORTAL_ERROR,
+    CONN_STATE_TIMEOUT,
     EP_ACS_LIST,
     EP_CLAIM_LIST,
     EP_CURRENT_USER,
@@ -283,6 +287,11 @@ class Dnevnik2Client:
         self._last_set_cookies_diag: list[dict[str, Any]] = []
         self._last_esia_refresh_diag: list[dict[str, Any]] = []
         self._last_auth_failure_diag: dict[str, Any] = {}
+        self._connection_state: str = CONN_STATE_OK
+        self._last_success_at: int | None = None
+        self._last_error_at: int | None = None
+        self._last_error_message: str | None = None
+        self._last_http_status: int | None = None
 
     def restore_diagnostics(self, saved: dict[str, Any] | None) -> None:
         """Восстанавливает сохранённую диагностику токена из хранилища после перезапуска."""
@@ -302,11 +311,56 @@ class Dnevnik2Client:
         self._esia_refreshes_succeeded = int(
             saved.get("esia_refreshes_succeeded") or 0
         )
+        if isinstance(saved.get("connection_state"), str):
+            self._connection_state = saved["connection_state"]
+        if isinstance(saved.get("last_success_at"), int):
+            self._last_success_at = saved["last_success_at"]
+        if isinstance(saved.get("last_error_at"), int):
+            self._last_error_at = saved["last_error_at"]
+        if isinstance(saved.get("last_error_message"), str):
+            self._last_error_message = saved["last_error_message"]
+        if isinstance(saved.get("last_http_status"), int):
+            self._last_http_status = saved["last_http_status"]
 
     def _notify_diag(self) -> None:
         """Уведомляет координатор о необходимости сохранить свежий слепок диагностики на диск."""
         if self._on_diag_updated is not None:
             self._on_diag_updated(self.token_diagnostics)
+
+    @property
+    def connection_state(self) -> str:
+        """Текущее состояние соединения/сессии ('ok', 'portal_error', 'timeout', 'auth_expired')."""
+        return self._connection_state
+
+    @property
+    def last_success_at(self) -> int | None:
+        """Unix-время последнего успешного запроса к API."""
+        return self._last_success_at
+
+    @property
+    def last_error_at(self) -> int | None:
+        """Unix-время последней ошибки запроса к API."""
+        return self._last_error_at
+
+    @property
+    def last_error_message(self) -> str | None:
+        """Текст последней ошибки запроса к API."""
+        return self._last_error_message
+
+    @property
+    def last_http_status(self) -> int | None:
+        """Последний HTTP-код ответа API."""
+        return self._last_http_status
+
+    @property
+    def sso_refreshes_count(self) -> int:
+        """Суммарное число успешных фоновых обновлений токена."""
+        return self._rotations_verified + self._esia_refreshes_succeeded
+
+    @property
+    def has_esk(self) -> bool:
+        """Признак наличия SSO-ключа ЕСИА (esk) в токене."""
+        return bool(jwt_esk(self._token) or self._esk)
 
     @property
     def token(self) -> str:
@@ -322,6 +376,11 @@ class Dnevnik2Client:
     def token_diagnostics(self) -> dict[str, Any]:
         """Обезличенная диагностика текущего JWT-токена, Set-Cookie и SSO-обновления ЕСИА."""
         return {
+            "connection_state": self._connection_state,
+            "last_success_at": self._last_success_at,
+            "last_error_at": self._last_error_at,
+            "last_error_message": self._last_error_message,
+            "last_http_status": self._last_http_status,
             "current_jwt_claims": redact_jwt_payload(
                 decode_jwt_payload(self._token)
             ),
@@ -765,12 +824,29 @@ class Dnevnik2Client:
                             _retried_esia=_retried_esia,
                         )
                     if self._last_esia_5xx >= 500:
+                        self._connection_state = CONN_STATE_PORTAL_ERROR
+                        self._last_error_at = int(time.time())
+                        self._last_http_status = self._last_esia_5xx
+                        self._last_error_message = (
+                            f"ESA HTTP {self._last_esia_5xx}"
+                        )
+                        self._notify_diag()
                         raise Dnevnik2ConnectionError(
                             f"ESA HTTP {self._last_esia_5xx}"
                         )
+                    self._connection_state = CONN_STATE_AUTH_EXPIRED
+                    self._last_error_at = int(time.time())
+                    self._last_http_status = response.status
+                    self._last_error_message = f"HTTP {response.status}"
+                    self._notify_diag()
                     raise Dnevnik2AuthError(f"HTTP {response.status}")
 
                 if response.status >= 500:
+                    self._connection_state = CONN_STATE_PORTAL_ERROR
+                    self._last_error_at = int(time.time())
+                    self._last_http_status = response.status
+                    self._last_error_message = f"HTTP {response.status}"
+                    self._notify_diag()
                     raise Dnevnik2ConnectionError(f"HTTP {response.status}")
 
                 try:
@@ -807,15 +883,35 @@ class Dnevnik2Client:
                                 _retried_fallback=True,
                                 _retried_esia=_retried_esia,
                             )
+                        self._connection_state = CONN_STATE_AUTH_EXPIRED
+                        self._last_error_at = int(time.time())
+                        self._last_http_status = response.status
+                        self._last_error_message = "Non-JSON 200 response"
+                        self._notify_diag()
                         raise Dnevnik2AuthError(
                             "Non-JSON 200 response"
                         ) from err
+                    self._connection_state = CONN_STATE_PORTAL_ERROR
+                    self._last_error_at = int(time.time())
+                    self._last_http_status = response.status
+                    self._last_error_message = "Invalid response body"
+                    self._notify_diag()
                     raise Dnevnik2ConnectionError("Invalid response body") from err
 
                 if response.status >= 400:
+                    self._connection_state = CONN_STATE_PORTAL_ERROR
+                    self._last_error_at = int(time.time())
+                    self._last_http_status = response.status
+                    self._last_error_message = f"HTTP {response.status}"
+                    self._notify_diag()
                     raise Dnevnik2ConnectionError(f"HTTP {response.status}")
 
                 if not isinstance(payload, dict):
+                    self._connection_state = CONN_STATE_PORTAL_ERROR
+                    self._last_error_at = int(time.time())
+                    self._last_http_status = response.status
+                    self._last_error_message = "Unexpected JSON payload root"
+                    self._notify_diag()
                     raise Dnevnik2ConnectionError("Unexpected JSON payload root")
 
                 data = payload.get("data")
@@ -827,6 +923,11 @@ class Dnevnik2Client:
                 ):
                     self._inspect_and_rotate_cookies(path, set_cookie_headers)
 
+                self._connection_state = CONN_STATE_OK
+                self._last_success_at = int(time.time())
+                self._last_http_status = response.status
+                self._last_error_message = None
+
                 if isinstance(data, dict):
                     return data
                 if isinstance(data, list):
@@ -835,6 +936,10 @@ class Dnevnik2Client:
         except Dnevnik2Error:
             raise
         except (ClientError, asyncio.TimeoutError, TimeoutError) as err:
+            self._connection_state = CONN_STATE_TIMEOUT
+            self._last_error_at = int(time.time())
+            self._last_error_message = str(err) or "Timeout"
+            self._notify_diag()
             raise Dnevnik2ConnectionError(str(err)) from err
 
     @staticmethod

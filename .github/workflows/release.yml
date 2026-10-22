@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Тег релиза (например, v0.1.24)"
+        description: "Тег релиза (например, v0.1.26)"
         required: true
-        default: "v0.1.24"
+        default: "v0.1.26"
       prerelease:
         description: "Отметить как Pre-release (альфа/бета)"
         type: boolean
@@ -40,14 +40,25 @@ jobs:
           zip -r ../dnevnik2.zip dnevnik2 -x "*/__pycache__/*" "*.pyc" "*.pyo"
 
       - name: Extract latest release notes from CHANGELOG.md
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           python3 - <<'EOF'
+          import os
           from pathlib import Path
           import re
 
-          pattern = r"(^## \[.*?)(?=^---|\Z|^## \[)"
+          tag = os.environ.get("TAG", "").strip().lstrip("vV")
           ru_text = Path("CHANGELOG.md").read_text(encoding="utf-8")
-          ru_match = re.search(pattern, ru_text, flags=re.MULTILINE | re.DOTALL)
+
+          ru_match = None
+          if tag:
+              ver_pattern = rf"(^## \[{re.escape(tag)}\].*?)(?=^---|\Z|^## \[)"
+              ru_match = re.search(ver_pattern, ru_text, flags=re.MULTILINE | re.DOTALL)
+          if not ru_match:
+              fallback_pattern = r"(^## \[.*?)(?=^---|\Z|^## \[)"
+              ru_match = re.search(fallback_pattern, ru_text, flags=re.MULTILINE | re.DOTALL)
+
           ru_notes = ru_match.group(1).strip() if ru_match else "Автоматическая сборка релиза."
           Path("release_notes.md").write_text(ru_notes + "\n", encoding="utf-8")
           EOF

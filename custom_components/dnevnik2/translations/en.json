@@ -86,6 +86,15 @@
       },
       "meal_buffet_balance": {
         "name": "Buffet"
+      },
+      "connection_status": {
+        "name": "Session status",
+        "state": {
+          "ok": "Active",
+          "portal_error": "Portal error (5xx)",
+          "timeout": "Connection timeout",
+          "auth_expired": "Token expired"
+        }
       }
     },
     "todo": {

@@ -12,6 +12,7 @@ from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import (
     config_validation as cv,
     device_registry as dr,
@@ -63,9 +64,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = coordinator
     try:
         await coordinator.async_config_entry_first_refresh()
-    except Exception:
-        hass.data[DOMAIN].pop(entry.entry_id, None)
-        raise
+    except ConfigEntryAuthFailed as err:
+        _LOGGER.warning("%s: %s", entry.title, err)
+        entry.async_start_reauth(hass)
+    except ConfigEntryNotReady as err:
+        if not coordinator.known_students:
+            raise
+        _LOGGER.warning("%s: %s", entry.title, err)
 
     js_file = Path(__file__).parent / "frontend" / f"{DOMAIN}-icons.js"
     if js_file.is_file() and getattr(hass, "http", None) is not None:
@@ -95,7 +100,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     coordinator.main_device_id = main_device.id
 
-    for edu_id, student in coordinator.students.items():
+    for edu_id, student in coordinator.known_students.items():
         dev_info = coordinator.device_info_for_student(student)
         sub_device = dev_reg.async_get_or_create(
             config_entry_id=entry.entry_id,
@@ -237,9 +242,11 @@ def _remove_stale_devices(
     coordinator: Dnevnik2Coordinator,
 ) -> None:
     """Удаляет подустройства учеников, которых больше нет в аккаунте."""
+    if not coordinator.last_update_success:
+        return
     active_identifiers = {(DOMAIN, entry.entry_id)} | {
         (DOMAIN, f"{entry.entry_id}_student_{edu_id}")
-        for edu_id in coordinator.students
+        for edu_id in coordinator.known_students
     }
     for device in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
         if not device.identifiers & active_identifiers:

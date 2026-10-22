@@ -7,12 +7,12 @@
   </picture>
 </p>
 
-[![Version](https://img.shields.io/badge/version-0.1.25-blue.svg)](https://github.com/S0ft0r/ha-dnevnik2)
+[![Version](https://img.shields.io/badge/version-0.1.26-blue.svg)](https://github.com/S0ft0r/ha-dnevnik2)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2026.8%2B-41BDF5.svg)](https://www.home-assistant.io/)
 
 **История изменений:** [CHANGELOG.md](CHANGELOG.md)
 
-**Версия:** 0.1.25  
+**Версия:** 0.1.26  
 **Домен интеграции:** `dnevnik2`
 
 Кастомная интеграция для подключения портала **«Петербургское образование. Электронный дневник»** (`https://dnevnik2.petersburgedu.ru`) к **Home Assistant**.
@@ -40,6 +40,7 @@
 | **Учащихся в профиле** (`account_status`) | `sensor` | <img src="docs/icons/mdi-school.svg" width="22" height="22" align="absmiddle"> `mdi:school` | Количество привязанных учащихся и их список в атрибутах |
 | **Лимит баланса питания** (`balance_limit`) | `number` *(Конфигурация)* | <img src="docs/icons/dnevnik2-meal-balance.svg" width="22" height="22" align="absmiddle"> `dnevnik2:meal-balance` | Настраиваемый порог (`₽`), ниже которого на любом из сенсоров («Столовая» или «Буфет») генерируется событие `dnevnik2_low_balance` |
 | **Обновить данные** (`refresh`) | `button` | <img src="docs/icons/mdi-database-sync.svg" width="22" height="22" align="absmiddle"> `mdi:database-sync` | Внеочередной опрос API дневника |
+| **Статус сессии** (`connection_status`) | `sensor` *(Диагностика)* | <img src="docs/icons/mdi-cloud-check-outline.svg" width="22" height="22" align="absmiddle"> `mdi:cloud-check-outline` | Состояние сессии и портала (`Активна`, `Сбой портала (5xx)`, `Таймаут соединения`, `Токен истёк`) + параметры JWT-токена и история обновлений в атрибутах |
 
 ### На подустройстве каждого учащегося
 | Сущность | Платформа | Иконка | Описание |
