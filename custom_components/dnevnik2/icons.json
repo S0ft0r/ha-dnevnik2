@@ -5,44 +5,44 @@
         "default": "mdi:school"
       },
       "average_grade": {
-        "default": "dnevnik2:grade-avg"
+        "default": "mdi:chart-line"
       },
       "last_grade": {
         "default": "mdi:numeric-5-box-outline"
       },
       "homework": {
-        "default": "dnevnik2:homework",
+        "default": "mdi:book-open-page-variant-outline",
         "state": {
-          "0": "dnevnik2:homework-done"
+          "0": "mdi:book-check-outline"
         }
       },
       "lessons_today": {
-        "default": "dnevnik2:schedule"
+        "default": "mdi:list-box-outline"
       },
       "turnstile_last": {
-        "default": "dnevnik2:turnstile-clock"
+        "default": "mdi:door-closed"
       },
       "meal_balance": {
-        "default": "dnevnik2:meal-balance"
+        "default": "mdi:silverware-fork-knife"
       }
     },
     "todo": {
       "homework": {
-        "default": "dnevnik2:homework",
+        "default": "mdi:book-open-page-variant-outline",
         "state": {
-          "0": "dnevnik2:homework-done"
+          "0": "mdi:book-check-outline"
         }
       },
       "lessons_today": {
-        "default": "dnevnik2:schedule"
+        "default": "mdi:list-box-outline"
       }
     },
     "binary_sensor": {
       "at_school": {
-        "default": "dnevnik2:school-off",
+        "default": "mdi:school-outline",
         "state": {
           "on": "mdi:school",
-          "off": "dnevnik2:school-off"
+          "off": "mdi:school-outline"
         }
       }
     },
