@@ -87,16 +87,16 @@
 
 ### Готовый проект автоматизации (Blueprint)
 
-В репозитории доступен готовый проект автоматизации (Blueprint) — [**`blueprint/ha-notifications.yaml`**](blueprint/ha-notifications.yaml), который включает в себя:
+В репозитории доступен готовый проект автоматизации (Blueprint) — [**`blueprint/ha_notifications.yaml`**](blueprint/ha_notifications.yaml), который включает в себя:
 * уведомления о новых оценках с раздельными шаблонами текста для хороших (`4–5`) и низких (`2–3`) оценок;
 * уведомления о входе и выходе учащегося через турникет школы;
 * вечернее напоминание о невыполненных домашних заданиях (работает и с `todo.*`, и с `sensor.*`);
 * оповещение о снижении баланса школьного питания ниже заданного порога.
 
-[![Импортировать проект в Home Assistant](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FS0ft0r%2Fha-dnevnik2%2Fblob%2Fmain%2Fblueprint%2Fha-notifications.yaml)
+[![Импортировать проект в Home Assistant](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FS0ft0r%2Fha-dnevnik2%2Fblob%2Fmain%2Fblueprint%2Fha_notifications.yaml)
 
 **Как подключить проект вручную:**
-1. Скопируйте файл [`blueprint/ha-notifications.yaml`](blueprint/ha-notifications.yaml) в папку `config/blueprints/automation/dnevnik2/` вашего Home Assistant (или в разделе **Настройки → Автоматизации и сцены → Проекты → Импортировать проект** укажите ссылку `https://github.com/S0ft0r/ha-dnevnik2/blob/main/blueprint/ha-notifications.yaml`).
+1. Скопируйте файл [`blueprint/ha_notifications.yaml`](blueprint/ha_notifications.yaml) в папку `config/blueprints/automation/dnevnik2/` вашего Home Assistant (или в разделе **Настройки → Автоматизации и сцены → Проекты → Импортировать проект** укажите ссылку `https://github.com/S0ft0r/ha-dnevnik2/blob/main/blueprint/ha_notifications.yaml`).
 2. Создайте автоматизацию на основе этого проекта, при необходимости отредактируйте тексты сообщений и укажите сервис отправки уведомлений, передав в него переменные `{{ notification_title }}` и `{{ notification_message }}`.
 
 ### Пример простой автоматизации без проекта (YAML)
