@@ -7,12 +7,12 @@
   </picture>
 </p>
 
-[![Version](https://img.shields.io/badge/version-0.1.21-blue.svg)](https://github.com/S0ft0r/ha-dnevnik2)
+[![Version](https://img.shields.io/badge/version-0.1.23-blue.svg)](https://github.com/S0ft0r/ha-dnevnik2)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2026.8%2B-41BDF5.svg)](https://www.home-assistant.io/)
 
 **История изменений:** [CHANGELOG.md](CHANGELOG.md)
 
-**Версия:** 0.1.21  
+**Версия:** 0.1.23  
 **Домен интеграции:** `dnevnik2`
 
 Кастомная интеграция для подключения портала **«Петербургское образование. Электронный дневник»** (`https://dnevnik2.petersburgedu.ru`) к **Home Assistant**.
@@ -38,6 +38,7 @@
 | Сущность | Платформа | Иконка | Описание |
 | :--- | :---: | :--- | :--- |
 | **Учащихся в профиле** (`account_status`) | `sensor` | <img src="docs/icons/mdi-school.svg" width="22" height="22" align="absmiddle"> `mdi:school` | Количество привязанных учащихся и их список в атрибутах |
+| **Лимит баланса питания** (`balance_limit`) | `number` *(Конфигурация)* | <img src="docs/icons/dnevnik2-meal-balance.svg" width="22" height="22" align="absmiddle"> `dnevnik2:meal-balance` | Настраиваемый порог (`₽`), ниже которого на любом из сенсоров («Столовая» или «Буфет») генерируется событие `dnevnik2_low_balance` |
 | **Обновить данные** (`refresh`) | `button` | <img src="docs/icons/mdi-database-sync.svg" width="22" height="22" align="absmiddle"> `mdi:database-sync` | Внеочередной опрос API дневника |
 
 ### На подустройстве каждого учащегося
@@ -49,7 +50,8 @@
 | **Расписание уроков / Уроков сегодня** (`lessons_today`) | `todo` или `sensor` | <img src="docs/icons/dnevnik2-schedule.svg" width="22" height="22" align="absmiddle"> `dnevnik2:schedule` | По выбору в настройках: интерактивный список дел (`todo`) с временем, кабинетами и учителями **или** числовой `sensor` с готовым многострочным атрибутом `text` |
 | **Последний проход через турникет** (`turnstile_last`) | `sensor` | <img src="docs/icons/dnevnik2-turnstile-clock.svg" width="22" height="22" align="absmiddle"> `dnevnik2:turnstile-clock` | Время последнего события СКУД школы и журнал последних проходов |
 | **В школе** (`at_school`) | `binary_sensor` | <img src="docs/icons/mdi-school.svg" width="22" height="22" align="absmiddle"> `mdi:school`<br><img src="docs/icons/dnevnik2-school-off.svg" width="22" height="22" align="absmiddle"> `dnevnik2:school-off` | Индикатор нахождения в здании школы по данным турникета СКУД |
-| **Баланс питания** (`meal_balance`) | `sensor` | <img src="docs/icons/dnevnik2-meal-balance.svg" width="22" height="22" align="absmiddle"> `dnevnik2:meal-balance` | Остаток средств на счетах школьного питания (`₽`) + разбивка по счетам («Горячее питание», «Буфет») в атрибутах |
+| **Столовая** (`meal_hot_balance`) | `sensor` *(Диагностика)* | <img src="docs/icons/dnevnik2-meal-balance.svg" width="22" height="22" align="absmiddle"> `dnevnik2:meal-balance` | Остаток средств на лицевом счёте столовой / горячего питания (`₽`) |
+| **Буфет** (`meal_buffet_balance`) | `sensor` *(Диагностика)* | <img src="docs/icons/dnevnik2-buffet-balance.svg" width="22" height="22" align="absmiddle"> `dnevnik2:buffet-balance` | Остаток средств на лицевом счёте буфета (`₽`, иконка стакана с монетой рубля) |
 
 ---
 
@@ -79,7 +81,13 @@
 * `at_school` (`true` — зашёл в школу, `false` — вышел из школы)
 * `direction` (`input` / `output`), `datetime` (`22.10.2026 08:17:42`)
 
-### 3. Готовые текстовые атрибуты на `todo.*` и `sensor.*`
+### 3. Событие `dnevnik2_low_balance` — снижение баланса Столовой или Буфета ниже лимита
+Формируется автоматически, когда остаток на **любом** из двух сенсоров (`Столовая` или `Буфет`) опускается ниже порога `balance_limit` (настраивается в `ConfigFlow`, `OptionsFlow` и через сущность `number.*_balance_limit` на основном устройстве):
+* `first_name` (`Александр`), `short_name` (`Иванов А.`), `device_id`, `education_id`
+* `account` (`hot` или `buffet`), `account_name` (`Столовая` или `Буфет`)
+* `balance` (`140.0`), `limit` (`200`), `hot_balance`, `buffet_balance`
+
+### 4. Готовые текстовые атрибуты на `todo.*` и `sensor.*`
 Независимо от того, какой формат выбран в настройках (`Список дел (To-do)` или `Сенсор с текстовым атрибутом`), у сущностей домашних заданий и уроков формируются готовые строковые атрибуты:
 * `uncompleted_text` — многострочный список **только невыполненных** домашних заданий (обновляется мгновенно при снятии/установке галочек в Todo);
 * `text` — многострочный список всех заданий или уроков на сегодня;

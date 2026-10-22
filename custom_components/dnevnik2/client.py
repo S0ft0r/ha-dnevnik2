@@ -8,8 +8,9 @@ from collections.abc import Callable
 from datetime import date
 import json
 import re
+import time
 from typing import Any
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 from aiohttp import ClientError, ClientResponse, ClientSession, ClientTimeout
 
@@ -106,13 +107,32 @@ def decode_jwt_payload(token: str | None) -> dict[str, Any]:
     return {}
 
 
+def jwt_user_identity(payload: dict[str, Any]) -> str:
+    """Извлекает идентификатор пользователя из современного ЕСИА (eid/esaid) или старого (userId) JWT."""
+    for key in ("eid", "esaid", "userId", "user_id", "sub", "id"):
+        val = payload.get(key)
+        if val is not None and str(val).strip():
+            return str(val).strip()
+    return ""
+
+
+def jwt_esk(token: str | None) -> str:
+    """Извлекает ключ SSO-сессии ЕСИА (esk -> sso-key) из payload JWT-токена."""
+    payload = decode_jwt_payload(token)
+    esk = payload.get("esk")
+    return str(esk).strip() if esk else ""
+
+
 def redact_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """Маскирует идентификатор пользователя в декодированном JWT-payload для диагностики."""
+    """Маскирует идентификаторы пользователя и SSO-ключ в декодированном JWT-payload для диагностики."""
     safe: dict[str, Any] = {}
     for key, val in payload.items():
         if key.lower() in (
             "userid",
             "user_id",
+            "eid",
+            "esaid",
+            "esk",
             "sub",
             "id",
             "lastid",
@@ -124,6 +144,11 @@ def redact_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
             safe[key] = "***" if val is not None else None
         else:
             safe[key] = val
+    exp = int(payload.get("exp") or 0)
+    iat = int(payload.get("iat") or 0)
+    if exp > 0 and iat > 0:
+        safe["ttl_seconds"] = exp - iat
+    safe["has_esk"] = bool(payload.get("esk"))
     return safe
 
 
@@ -155,6 +180,8 @@ def clear_petersburgedu_cookies(session: ClientSession | None) -> None:
             ".petersburgedu.ru",
             "dnevnik2.petersburgedu.ru",
             ".dnevnik2.petersburgedu.ru",
+            "esa.petersburgedu.ru",
+            ".esa.petersburgedu.ru",
         ):
             try:
                 jar.clear_domain(dom)
@@ -164,7 +191,7 @@ def clear_petersburgedu_cookies(session: ClientSession | None) -> None:
         try:
             jar.clear(
                 lambda m: "petersburgedu" in str(m.get("domain", "")).lower()
-                or getattr(m, "key", "") == SESSION_COOKIE
+                or getattr(m, "key", "") in (SESSION_COOKIE, "sso-key")
             )
         except Exception:
             pass
@@ -210,6 +237,21 @@ def unwrap_scalar(value: Any) -> Any:
     return None
 
 
+_ROTATION_SAFE_PATHS: frozenset[str] = frozenset(
+    {
+        EP_RELATED_CHILDREN,
+        EP_CURRENT_USER,
+        EP_GROUP_PERIODS,
+        EP_STUDIED_SUBJECTS,
+        EP_TEACHERS_LIST,
+        EP_ESTIMATE_TABLE,
+        EP_LESSONS_LIST,
+        EP_SCHEDULE_LIST,
+        EP_ACS_LIST,
+    }
+)
+
+
 class Dnevnik2Client:
     """Клиент работы с эндпоинтами dnevnik2.petersburgedu.ru и скользящим обновлением X-JWT-Token."""
 
@@ -227,11 +269,17 @@ class Dnevnik2Client:
             extract_jwt_token(fallback_token) or (fallback_token or "").strip()
         )
         self._fallback_token: str = fb_clean or self._token
+        self._esk: str = jwt_esk(self._token) or jwt_esk(self._fallback_token)
         self._on_token_refreshed = on_token_refreshed
         self._timeout = ClientTimeout(total=REQUEST_TIMEOUT_SEC)
         self._rotations_verified: int = 0
         self._rotations_rejected: int = 0
+        self._esia_refreshes_succeeded: int = 0
+        self._esia_refreshes_attempted: int = 0
+        self._in_esia_refresh: bool = False
         self._last_set_cookies_diag: list[dict[str, Any]] = []
+        self._last_esia_refresh_diag: list[dict[str, Any]] = []
+        self._last_auth_failure_diag: dict[str, Any] = {}
 
     @property
     def token(self) -> str:
@@ -245,7 +293,7 @@ class Dnevnik2Client:
 
     @property
     def token_diagnostics(self) -> dict[str, Any]:
-        """Обезличенная диагностика текущего JWT-токена и заголовков Set-Cookie."""
+        """Обезличенная диагностика текущего JWT-токена, Set-Cookie и SSO-обновления ЕСИА."""
         return {
             "current_jwt_claims": redact_jwt_payload(
                 decode_jwt_payload(self._token)
@@ -256,9 +304,14 @@ class Dnevnik2Client:
             "has_distinct_fallback": bool(
                 self._fallback_token and self._fallback_token != self._token
             ),
+            "has_esk_sso_key": bool(self._esk),
             "rotations_verified": self._rotations_verified,
             "rotations_rejected": self._rotations_rejected,
-            "last_set_cookies_on_child_list": list(self._last_set_cookies_diag),
+            "esia_refreshes_attempted": self._esia_refreshes_attempted,
+            "esia_refreshes_succeeded": self._esia_refreshes_succeeded,
+            "last_set_cookies": list(self._last_set_cookies_diag),
+            "last_esia_refresh": list(self._last_esia_refresh_diag),
+            "last_auth_failure": dict(self._last_auth_failure_diag),
         }
 
     def set_token(self, token: str) -> None:
@@ -267,6 +320,9 @@ class Dnevnik2Client:
         self._token = cleaned
         if cleaned:
             self._fallback_token = cleaned
+            esk = jwt_esk(cleaned)
+            if esk:
+                self._esk = esk
 
     def _headers(
         self, include_auth: bool = True, token_override: str | None = None
@@ -274,66 +330,81 @@ class Dnevnik2Client:
         headers = {
             "User-Agent": USER_AGENT,
             "Accept": "application/json, text/plain, */*",
+            "Accept-Charset": "UTF-8",
             "X-Requested-With": "XMLHttpRequest",
-            "Referer": REFERER_URL,
+            "Referer": f"{BASE_URL}/schedule",
         }
         tok = token_override if token_override is not None else self._token
         if include_auth and tok:
-            headers[SESSION_COOKIE] = tok
-            headers["Cookie"] = f"{SESSION_COOKIE}={tok}"
+            esk = jwt_esk(tok) or self._esk
+            headers["X-JWT-Token"] = tok
+            if esk:
+                headers["Cookie"] = f"{SESSION_COOKIE}={tok}; sso-key={esk}"
+            else:
+                headers["Cookie"] = f"{SESSION_COOKIE}={tok}"
         return headers
 
     def _clear_session_cookie_jar(self) -> None:
         """Очищает CookieJar сессии aiohttp (включая домен petersburgedu.ru без ведущей точки)."""
         clear_petersburgedu_cookies(self._session)
 
-    async def _async_probe_token(self, candidate: str) -> bool:
-        """Проверяет, что новый токен из Set-Cookie реально принимается эндпоинтом related-child-list."""
-        url = f"{BASE_URL}{EP_RELATED_CHILDREN}"
-        self._clear_session_cookie_jar()
-        try:
-            async with self._session.get(
-                url,
-                params={"p_page": "1"},
-                headers=self._headers(
-                    include_auth=True, token_override=candidate
-                ),
-                timeout=self._timeout,
-                allow_redirects=False,
-                ssl=False,
-            ) as resp:
-                self._clear_session_cookie_jar()
-                if resp.status != 200:
-                    return False
-                payload = await resp.json(content_type=None)
-                if not isinstance(payload, dict):
-                    return False
-                data = payload.get("data")
-                if isinstance(data, dict) and isinstance(
-                    data.get("items"), list
-                ):
-                    return len(data["items"]) > 0
-                return False
-        except Exception:
+    def _is_valid_candidate_jwt(self, cand: str) -> bool:
+        """Проверяет, что кандидат X-JWT-Token принадлежит тому же пользователю (eid/esaid/userId)."""
+        if not cand or not cand.startswith("eyJ"):
             return False
-
-    async def _async_inspect_and_rotate_cookies(
-        self, set_cookie_headers: list[str]
-    ) -> None:
-        """Анализирует Set-Cookie от related-child-list и применяет новый токен только после 200 OK проверки."""
         cur_payload = decode_jwt_payload(self._token)
-        cur_user_id = cur_payload.get("userId") or cur_payload.get("user_id")
+        cand_payload = decode_jwt_payload(cand)
+        if not cand_payload:
+            return False
+        cur_uid = jwt_user_identity(cur_payload)
+        cand_uid = jwt_user_identity(cand_payload)
+        if not cand_uid:
+            return False
+        if cur_uid and cand_uid != cur_uid:
+            return False
+        cur_ts, _ = jwt_exp_iat(self._token)
+        cand_ts, _ = jwt_exp_iat(cand)
+        return cur_ts == 0 or cand_ts == 0 or (cand_ts >= cur_ts)
+
+    def _commit_new_token(self, chosen: str) -> bool:
+        """Атомарно обновляет рабочий и резервный токены, сохраняя их в ConfigEntry."""
+        if not chosen or chosen == self._token:
+            return False
+        if not self._is_valid_candidate_jwt(chosen):
+            self._rotations_rejected += 1
+            return False
+        self._fallback_token = self._token
+        self._token = chosen
+        esk = jwt_esk(chosen)
+        if esk:
+            self._esk = esk
+        self._rotations_verified += 1
+        if self._on_token_refreshed is not None:
+            self._on_token_refreshed(chosen, self._fallback_token)
+        return True
+
+    def _inspect_and_rotate_cookies(
+        self, path: str, set_cookie_headers: list[str]
+    ) -> None:
+        """Извлекает ПОСЛЕДНИЙ валидный Set-Cookie: X-JWT-Token (при дублировании Path=/ и Path=/api побеждает последний)."""
+        cur_payload = decode_jwt_payload(self._token)
+        cur_user_id = jwt_user_identity(cur_payload)
         cur_ts, _ = jwt_exp_iat(self._token)
 
         diag_entries: list[dict[str, Any]] = []
-        valid_candidates: list[tuple[int, int, str]] = []
+        valid_candidates: list[str] = []
 
-        for idx, hdr in enumerate(set_cookie_headers):
+        for hdr in set_cookie_headers:
             first_part = hdr.split(";", 1)[0].strip()
             cookie_name = (
                 first_part.split("=", 1)[0].strip()
                 if "=" in first_part
                 else first_part
+            )
+            cookie_val = (
+                first_part.split("=", 1)[1].strip()
+                if "=" in first_part
+                else ""
             )
             path_val = ""
             domain_val = ""
@@ -346,10 +417,13 @@ class Dnevnik2Client:
                     elif k_low == "domain":
                         domain_val = kv[1].strip()
 
-            match = _SET_COOKIE_JWT_RE.search(hdr)
-            if not match:
+            if cookie_name.lower() == "sso-key" and cookie_val:
+                self._esk = cookie_val
+
+            if cookie_name.lower() != SESSION_COOKIE.lower():
                 diag_entries.append(
                     {
+                        "endpoint": path,
                         "cookie_name": cookie_name,
                         "path": path_val,
                         "domain": domain_val,
@@ -358,50 +432,225 @@ class Dnevnik2Client:
                 )
                 continue
 
+            match = _SET_COOKIE_JWT_RE.search(hdr)
+            if not match:
+                continue
+
             cand = match.group(1).strip()
             cand_payload = decode_jwt_payload(cand)
-            cand_user_id = cand_payload.get("userId") or cand_payload.get(
-                "user_id"
-            )
+            cand_user_id = jwt_user_identity(cand_payload)
             cand_ts, _ = jwt_exp_iat(cand)
             same_as_cur = cand == self._token
-            user_id_ok = (not cur_user_id) or (cand_user_id == cur_user_id)
-            ts_ok = cur_ts == 0 or (cand_ts > cur_ts)
+            user_id_ok = bool(cand_user_id) and (
+                (not cur_user_id) or (cand_user_id == cur_user_id)
+            )
+            ts_ok = cur_ts == 0 or cand_ts == 0 or (cand_ts >= cur_ts)
 
             diag_entries.append(
                 {
+                    "endpoint": path,
                     "cookie_name": cookie_name,
                     "path": path_val,
                     "domain": domain_val,
                     "is_jwt": True,
                     "same_as_current": same_as_cur,
                     "user_id_matches": user_id_ok,
-                    "last_activity_advanced": ts_ok,
+                    "last_activity_ok": ts_ok,
                     "claims": redact_jwt_payload(cand_payload),
                 }
             )
 
-            if not same_as_cur and user_id_ok and ts_ok:
-                valid_candidates.append((cand_ts, idx, cand))
+            if user_id_ok and ts_ok:
+                valid_candidates.append(cand)
+            else:
+                self._rotations_rejected += 1
 
-        self._last_set_cookies_diag = diag_entries
+        if diag_entries:
+            self._last_set_cookies_diag = diag_entries
+
         if not valid_candidates:
             return
 
-        valid_candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
-        seen_cands: set[str] = set()
-        for _, _, cand in valid_candidates:
-            if cand in seen_cands:
-                continue
-            seen_cands.add(cand)
-            if await self._async_probe_token(cand):
-                self._fallback_token = self._token
-                self._token = cand
-                self._rotations_verified += 1
-                if self._on_token_refreshed is not None:
-                    self._on_token_refreshed(cand, self._fallback_token)
-                return
-            self._rotations_rejected += 1
+        chosen = valid_candidates[-1]
+        self._commit_new_token(chosen)
+
+    async def async_refresh_via_esia_esk(self) -> bool:
+        """Бесшовное обновление 8-минутного X-JWT-Token через SSO-ключ ЕСИА (esk -> sso-key)."""
+        if self._in_esia_refresh:
+            return False
+        esk = jwt_esk(self._token) or self._esk
+        if not esk:
+            return False
+
+        self._in_esia_refresh = True
+        self._esia_refreshes_attempted += 1
+        hops_diag: list[dict[str, Any]] = []
+        found_tokens: list[str] = []
+
+        hop_cookies: dict[str, str] = {"sso-key": esk}
+        if self._token:
+            hop_cookies[SESSION_COOKIE] = self._token
+
+        def _cookie_header() -> str:
+            return "; ".join(f"{k}={v}" for k, v in hop_cookies.items() if v)
+
+        def _collect_set_cookies(hdrs: list[str]) -> list[str]:
+            names: list[str] = []
+            for h in hdrs:
+                first_part = h.split(";", 1)[0].strip()
+                if "=" not in first_part:
+                    continue
+                k, v = first_part.split("=", 1)
+                k = k.strip()
+                v = v.strip().strip('"')
+                if not k:
+                    continue
+                names.append(k)
+                if v and v.lower() not in ("deleted", "null", "none"):
+                    hop_cookies[k] = v
+                if k.lower() == "sso-key" and v:
+                    self._esk = v
+                m = _SET_COOKIE_JWT_RE.search(h)
+                if m:
+                    cand = m.group(1).strip()
+                    if self._is_valid_candidate_jwt(cand):
+                        found_tokens.append(cand)
+            return names
+
+        try:
+            self._clear_session_cookie_jar()
+            login_api_url = f"{BASE_URL}{EP_ESIA_LOGIN_URL}"
+            esa_url: str | None = None
+
+            async with self._session.get(
+                login_api_url,
+                headers={
+                    "User-Agent": USER_AGENT,
+                    "Accept": "application/json, text/plain, */*",
+                    "X-Requested-With": "XMLHttpRequest",
+                    "Referer": f"{BASE_URL}/login",
+                    "Cookie": _cookie_header(),
+                },
+                timeout=self._timeout,
+                allow_redirects=False,
+                ssl=False,
+            ) as resp:
+                sc_names = _collect_set_cookies(
+                    list(resp.headers.getall("Set-Cookie", []))
+                )
+                self._clear_session_cookie_jar()
+                loc = resp.headers.get("Location", "")
+                if loc:
+                    cand_loc = extract_jwt_token(loc)
+                    if cand_loc and self._is_valid_candidate_jwt(cand_loc):
+                        found_tokens.append(cand_loc)
+                    esa_url = urljoin(login_api_url, loc)
+                else:
+                    try:
+                        body_json = await resp.json(content_type=None)
+                        if isinstance(body_json, dict):
+                            inner = body_json.get("data")
+                            if isinstance(inner, dict) and isinstance(
+                                inner.get("url"), str
+                            ):
+                                esa_url = inner["url"]
+                            elif isinstance(inner, str) and inner.startswith(
+                                "http"
+                            ):
+                                esa_url = inner
+                            elif isinstance(body_json.get("url"), str):
+                                esa_url = body_json["url"]
+                    except Exception:
+                        pass
+
+                hops_diag.append(
+                    {
+                        "hop": 0,
+                        "host": "dnevnik2.petersburgedu.ru",
+                        "path": EP_ESIA_LOGIN_URL,
+                        "status": resp.status,
+                        "set_cookies": sc_names,
+                        "got_esa_url": bool(esa_url),
+                    }
+                )
+
+            next_url = esa_url
+            for hop_idx in range(1, 9):
+                if not next_url:
+                    break
+                cand_from_url = extract_jwt_token(next_url)
+                if cand_from_url and self._is_valid_candidate_jwt(
+                    cand_from_url
+                ):
+                    found_tokens.append(cand_from_url)
+                    hop_cookies[SESSION_COOKIE] = cand_from_url
+
+                parsed_next = urlparse(next_url)
+                async with self._session.get(
+                    next_url,
+                    headers={
+                        "User-Agent": USER_AGENT,
+                        "Accept": "text/html,application/xhtml+xml,application/json,*/*",
+                        "Referer": f"{BASE_URL}/",
+                        "Cookie": _cookie_header(),
+                    },
+                    timeout=self._timeout,
+                    allow_redirects=False,
+                    ssl=False,
+                ) as hop_resp:
+                    sc_names = _collect_set_cookies(
+                        list(hop_resp.headers.getall("Set-Cookie", []))
+                    )
+                    self._clear_session_cookie_jar()
+                    loc = hop_resp.headers.get("Location", "")
+                    loc_has_jwt = False
+                    if loc:
+                        cand_loc = extract_jwt_token(loc)
+                        if cand_loc and self._is_valid_candidate_jwt(cand_loc):
+                            found_tokens.append(cand_loc)
+                            hop_cookies[SESSION_COOKIE] = cand_loc
+                            loc_has_jwt = True
+
+                    hops_diag.append(
+                        {
+                            "hop": hop_idx,
+                            "host": parsed_next.netloc,
+                            "path": parsed_next.path,
+                            "status": hop_resp.status,
+                            "set_cookies": sc_names,
+                            "location_has_jwt": loc_has_jwt,
+                        }
+                    )
+
+                    if hop_resp.status in (301, 302, 303, 307, 308) and loc:
+                        next_url = urljoin(next_url, loc)
+                        continue
+
+                    if hop_resp.status == 200 and not found_tokens:
+                        try:
+                            text_body = await hop_resp.text()
+                            cand_body = extract_jwt_token(text_body)
+                            if cand_body and self._is_valid_candidate_jwt(
+                                cand_body
+                            ):
+                                found_tokens.append(cand_body)
+                        except Exception:
+                            pass
+                    break
+
+            self._last_esia_refresh_diag = hops_diag
+
+            for cand in reversed(found_tokens):
+                if self._commit_new_token(cand):
+                    self._esia_refreshes_succeeded += 1
+                    return True
+            return False
+        except Exception as err:
+            hops_diag.append({"error": str(err)})
+            self._last_esia_refresh_diag = hops_diag
+            return False
+        finally:
+            self._in_esia_refresh = False
 
     async def _request(
         self,
@@ -409,8 +658,20 @@ class Dnevnik2Client:
         params: dict[str, Any] | list[tuple[str, str]] | None = None,
         *,
         include_auth: bool = True,
+        _retried_fallback: bool = False,
+        _retried_esia: bool = False,
     ) -> dict[str, Any]:
-        """Выполняет GET-запрос к API дневника с проверенной ротацией X-JWT-Token и изоляцией CookieJar."""
+        """Выполняет GET-запрос к API дневника со скользящим и SSO-обновлением X-JWT-Token."""
+        if (
+            include_auth
+            and not self._in_esia_refresh
+            and not _retried_esia
+            and self._token
+        ):
+            cur_exp, _ = jwt_exp_iat(self._token)
+            if cur_exp > 0 and time.time() >= cur_exp:
+                await self.async_refresh_via_esia_esk()
+
         url = f"{BASE_URL}{path}"
         self._clear_session_cookie_jar()
         try:
@@ -428,11 +689,34 @@ class Dnevnik2Client:
                 self._clear_session_cookie_jar()
 
                 if response.status in (301, 302, 303, 307, 308, 401, 403):
+                    self._last_auth_failure_diag = {
+                        "endpoint": path,
+                        "status": response.status,
+                        "location": response.headers.get("Location", ""),
+                        "set_cookie_count": len(set_cookie_headers),
+                        "timestamp": int(time.time()),
+                    }
+                    if set_cookie_headers:
+                        self._inspect_and_rotate_cookies(
+                            path, set_cookie_headers
+                        )
                     if (
                         include_auth
+                        and not _retried_esia
+                        and await self.async_refresh_via_esia_esk()
+                    ):
+                        return await self._request(
+                            path,
+                            params=params,
+                            include_auth=include_auth,
+                            _retried_fallback=_retried_fallback,
+                            _retried_esia=True,
+                        )
+                    if (
+                        include_auth
+                        and not _retried_fallback
                         and self._fallback_token
                         and self._fallback_token != self._token
-                        and await self._async_probe_token(self._fallback_token)
                     ):
                         self._token = self._fallback_token
                         if self._on_token_refreshed is not None:
@@ -440,7 +724,11 @@ class Dnevnik2Client:
                                 self._token, self._fallback_token
                             )
                         return await self._request(
-                            path, params=params, include_auth=include_auth
+                            path,
+                            params=params,
+                            include_auth=include_auth,
+                            _retried_fallback=True,
+                            _retried_esia=_retried_esia,
                         )
                     raise Dnevnik2AuthError(f"HTTP {response.status}")
 
@@ -451,7 +739,39 @@ class Dnevnik2Client:
                     payload = await response.json(content_type=None)
                 except Exception as err:
                     if response.status == 200:
-                        raise Dnevnik2AuthError("Non-JSON 200 response") from err
+                        if (
+                            include_auth
+                            and not _retried_esia
+                            and await self.async_refresh_via_esia_esk()
+                        ):
+                            return await self._request(
+                                path,
+                                params=params,
+                                include_auth=include_auth,
+                                _retried_fallback=_retried_fallback,
+                                _retried_esia=True,
+                            )
+                        if (
+                            include_auth
+                            and not _retried_fallback
+                            and self._fallback_token
+                            and self._fallback_token != self._token
+                        ):
+                            self._token = self._fallback_token
+                            if self._on_token_refreshed is not None:
+                                self._on_token_refreshed(
+                                    self._token, self._fallback_token
+                                )
+                            return await self._request(
+                                path,
+                                params=params,
+                                include_auth=include_auth,
+                                _retried_fallback=True,
+                                _retried_esia=_retried_esia,
+                            )
+                        raise Dnevnik2AuthError(
+                            "Non-JSON 200 response"
+                        ) from err
                     raise Dnevnik2ConnectionError("Invalid response body") from err
 
                 if response.status >= 400:
@@ -463,13 +783,11 @@ class Dnevnik2Client:
                 data = payload.get("data")
                 if (
                     include_auth
-                    and path == EP_RELATED_CHILDREN
+                    and path in _ROTATION_SAFE_PATHS
                     and set_cookie_headers
                     and isinstance(data, (dict, list))
                 ):
-                    await self._async_inspect_and_rotate_cookies(
-                        set_cookie_headers
-                    )
+                    self._inspect_and_rotate_cookies(path, set_cookie_headers)
 
                 if isinstance(data, dict):
                     return data
@@ -508,12 +826,15 @@ class Dnevnik2Client:
         return await self._request(EP_CURRENT_USER)
 
     async def async_keep_alive(self) -> bool:
-        """Фоновый пинг сессии для скользящего продления X-JWT-Token без простоя."""
+        """Фоновый пинг сессии и упреждающее SSO-продление 8-минутного X-JWT-Token через esk."""
         try:
             await self._request(EP_RELATED_CHILDREN, params={"p_page": "1"})
+            cur_exp, _ = jwt_exp_iat(self._token)
+            if cur_exp > 0 and time.time() >= cur_exp - 270:
+                await self.async_refresh_via_esia_esk()
             return True
         except Dnevnik2Error:
-            return False
+            return await self.async_refresh_via_esia_esk()
 
     async def async_get_children(self) -> list[dict[str, Any]]:
         """Список связанных детей и их обучений (/api/journal/person/related-child-list)."""
