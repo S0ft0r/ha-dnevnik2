@@ -261,6 +261,7 @@ class Dnevnik2Client:
         token: str | None = None,
         fallback_token: str | None = None,
         on_token_refreshed: Callable[[str, str], None] | None = None,
+        on_diag_updated: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         """Инициализация HTTP-клиента."""
         self._session = session
@@ -271,15 +272,41 @@ class Dnevnik2Client:
         self._fallback_token: str = fb_clean or self._token
         self._esk: str = jwt_esk(self._token) or jwt_esk(self._fallback_token)
         self._on_token_refreshed = on_token_refreshed
+        self._on_diag_updated = on_diag_updated
         self._timeout = ClientTimeout(total=REQUEST_TIMEOUT_SEC)
         self._rotations_verified: int = 0
         self._rotations_rejected: int = 0
         self._esia_refreshes_succeeded: int = 0
         self._esia_refreshes_attempted: int = 0
+        self._last_esia_5xx: int = 0
         self._in_esia_refresh: bool = False
         self._last_set_cookies_diag: list[dict[str, Any]] = []
         self._last_esia_refresh_diag: list[dict[str, Any]] = []
         self._last_auth_failure_diag: dict[str, Any] = {}
+
+    def restore_diagnostics(self, saved: dict[str, Any] | None) -> None:
+        """Восстанавливает сохранённую диагностику токена из хранилища после перезапуска."""
+        if not isinstance(saved, dict):
+            return
+        if isinstance(saved.get("last_esia_refresh"), list):
+            self._last_esia_refresh_diag = list(saved["last_esia_refresh"])
+        if isinstance(saved.get("last_auth_failure"), dict):
+            self._last_auth_failure_diag = dict(saved["last_auth_failure"])
+        if isinstance(saved.get("last_set_cookies"), list):
+            self._last_set_cookies_diag = list(saved["last_set_cookies"])
+        self._rotations_verified = int(saved.get("rotations_verified") or 0)
+        self._rotations_rejected = int(saved.get("rotations_rejected") or 0)
+        self._esia_refreshes_attempted = int(
+            saved.get("esia_refreshes_attempted") or 0
+        )
+        self._esia_refreshes_succeeded = int(
+            saved.get("esia_refreshes_succeeded") or 0
+        )
+
+    def _notify_diag(self) -> None:
+        """Уведомляет координатор о необходимости сохранить свежий слепок диагностики на диск."""
+        if self._on_diag_updated is not None:
+            self._on_diag_updated(self.token_diagnostics)
 
     @property
     def token(self) -> str:
@@ -474,10 +501,12 @@ class Dnevnik2Client:
             self._last_set_cookies_diag = diag_entries
 
         if not valid_candidates:
+            self._notify_diag()
             return
 
         chosen = valid_candidates[-1]
         self._commit_new_token(chosen)
+        self._notify_diag()
 
     async def async_refresh_via_esia_esk(self) -> bool:
         """Бесшовное обновление 8-минутного X-JWT-Token через SSO-ключ ЕСИА (esk -> sso-key)."""
@@ -489,12 +518,11 @@ class Dnevnik2Client:
 
         self._in_esia_refresh = True
         self._esia_refreshes_attempted += 1
+        self._last_esia_5xx = 0
         hops_diag: list[dict[str, Any]] = []
         found_tokens: list[str] = []
 
         hop_cookies: dict[str, str] = {"sso-key": esk}
-        if self._token:
-            hop_cookies[SESSION_COOKIE] = self._token
 
         def _cookie_header() -> str:
             return "; ".join(f"{k}={v}" for k, v in hop_cookies.items() if v)
@@ -534,7 +562,7 @@ class Dnevnik2Client:
                     "Accept": "application/json, text/plain, */*",
                     "X-Requested-With": "XMLHttpRequest",
                     "Referer": f"{BASE_URL}/login",
-                    "Cookie": _cookie_header(),
+                    "Connection": "close",
                 },
                 timeout=self._timeout,
                 allow_redirects=False,
@@ -568,6 +596,8 @@ class Dnevnik2Client:
                     except Exception:
                         pass
 
+                if resp.status >= 500:
+                    self._last_esia_5xx = resp.status
                 hops_diag.append(
                     {
                         "hop": 0,
@@ -597,6 +627,7 @@ class Dnevnik2Client:
                         "User-Agent": USER_AGENT,
                         "Accept": "text/html,application/xhtml+xml,application/json,*/*",
                         "Referer": f"{BASE_URL}/",
+                        "Connection": "close",
                         "Cookie": _cookie_header(),
                     },
                     timeout=self._timeout,
@@ -607,9 +638,14 @@ class Dnevnik2Client:
                         list(hop_resp.headers.getall("Set-Cookie", []))
                     )
                     self._clear_session_cookie_jar()
+                    if hop_resp.status >= 500:
+                        self._last_esia_5xx = hop_resp.status
                     loc = hop_resp.headers.get("Location", "")
                     loc_has_jwt = False
+                    loc_target = ""
                     if loc:
+                        parsed_loc = urlparse(urljoin(next_url, loc))
+                        loc_target = f"{parsed_loc.netloc}{parsed_loc.path}"
                         cand_loc = extract_jwt_token(loc)
                         if cand_loc and self._is_valid_candidate_jwt(cand_loc):
                             found_tokens.append(cand_loc)
@@ -623,6 +659,7 @@ class Dnevnik2Client:
                             "path": parsed_next.path,
                             "status": hop_resp.status,
                             "set_cookies": sc_names,
+                            "location_target": loc_target,
                             "location_has_jwt": loc_has_jwt,
                         }
                     )
@@ -656,6 +693,7 @@ class Dnevnik2Client:
             return False
         finally:
             self._in_esia_refresh = False
+            self._notify_diag()
 
     async def _request(
         self,
@@ -691,6 +729,7 @@ class Dnevnik2Client:
                         "set_cookie_count": len(set_cookie_headers),
                         "timestamp": int(time.time()),
                     }
+                    self._notify_diag()
                     if set_cookie_headers:
                         self._inspect_and_rotate_cookies(
                             path, set_cookie_headers
@@ -724,6 +763,10 @@ class Dnevnik2Client:
                             include_auth=include_auth,
                             _retried_fallback=True,
                             _retried_esia=_retried_esia,
+                        )
+                    if self._last_esia_5xx >= 500:
+                        raise Dnevnik2ConnectionError(
+                            f"ESA HTTP {self._last_esia_5xx}"
                         )
                     raise Dnevnik2AuthError(f"HTTP {response.status}")
 

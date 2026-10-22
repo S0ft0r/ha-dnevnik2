@@ -5,7 +5,7 @@
 
 ---
 
-## [0.1.24] — 22/10/2026
+## [0.1.25] — 22/10/2026
 
 ### Добавлено
 - **Первый публичный релиз интеграции «Электронный дневник СПб» (`dnevnik2`):**
@@ -20,10 +20,10 @@
     - Независимый выбор в мастере настройки (`ConfigFlow`) и параметрах (`OptionsFlow`) между интерактивными списками дел (`Platform.TODO` с сохранением отметок выполненных заданий в `Store` и именованием `Имя - домашние задания` в боковой панели «Списки дел») и текстовыми сенсорами (`Platform.SENSOR`) с готовыми многострочными атрибутами `text` и `uncompleted_text`.
   - **Двухшаговый мастер авторизации ЕСИА (`ConfigFlow`) и бесшовное поддержание сессии (`X-JWT-Token` / `esk`):**
     - Автоматическое определение типа клиента (`Home Assistant Companion` / мобильный или ПК) на первом шаге ввода `X-JWT-Token` и проверка списка учащихся на втором шаге настройки.
-    - Поддержка современной структуры ЕСИА-токена (`eid`, `esaid`, `esk`), передача `Cookie: X-JWT-Token=<token>; sso-key=<esk>`, принудительный `IPv4` (`family=socket.AF_INET`), `Connection: close`, автопересоздание HTTP-сессии при сетевых сбоях и фоновое SSO-продление через `esk` (`sso-key`).
+    - Поддержка современной структуры ЕСИА-токена (`eid`, `esaid`, `esk`), передача `Cookie: X-JWT-Token=<token>; sso-key=<esk>`, принудительный `IPv4` (`family=socket.AF_INET`), `Connection: close`, автопересоздание HTTP-сессии при сетевых сбоях, фоновое SSO-продление через `esk` (`sso-key`) и защита от сброса авторизации при авариях `502/503/504` на шлюзе `esa.petersburgedu.ru`.
   - **События для автоматизаций и готовый Blueprint уведомлений (`blueprint/ha_notifications.yaml`):**
     - Генерация событий `dnevnik2_new_grade` (новая оценка), `dnevnik2_turnstile` (вход/выход через турникет) и `dnevnik2_low_balance` (снижение баланса «Столовой» или «Буфета» ниже порога `balance_limit`) в шину `hass.bus`.
   - **Встроенный векторный набор кастомных иконок (`dnevnik2:*`) и патч переноса длинных строк (`frontend/dnevnik2-icons.js`):**
     - Кастомные иконки `dnevnik2:grade-avg`, `dnevnik2:homework`, `dnevnik2:homework-done`, `dnevnik2:schedule`, `dnevnik2:school-off`, `dnevnik2:turnstile-clock`, `dnevnik2:meal-balance` и `dnevnik2:buffet-balance`.
     - Автоматический многострочный перенос длинных названий сущностей (`hui-generic-entity-row`) и пунктов списков дел (`ha-check-list-item`) без обрезки троеточием (`...`).
-  - Полная локализация (`translations/ru.json` и `translations/en.json`), обезличенная диагностика на карточке каждого устройства (`diagnostics.py`) и перенастройка на лету (`OptionsFlow`).
+  - Полная локализация (`translations/ru.json` и `translations/en.json`), сохраняемая в `Store` обезличенная диагностика на карточке каждого устройства (`diagnostics.py`) и перенастройка на лету (`OptionsFlow`).

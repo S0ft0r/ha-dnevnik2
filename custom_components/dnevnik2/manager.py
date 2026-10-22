@@ -248,6 +248,7 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
             token=token,
             fallback_token=fallback_token,
             on_token_refreshed=self._on_token_refreshed,
+            on_diag_updated=self._on_diag_updated,
         )
         self._loaded_signature = self.config_signature
 
@@ -367,8 +368,28 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
                 completed = stored.get("completed_uids", [])
                 if isinstance(completed, list):
                     self._completed_uids = {str(x) for x in completed if x}
+                saved_diag = stored.get("token_diagnostics")
+                if isinstance(saved_diag, dict):
+                    self.client.restore_diagnostics(saved_diag)
         except Exception as err:
             _LOGGER.debug("Todo store load skipped: %s", err)
+
+    async def _async_persist_store(self) -> None:
+        """Сохраняет выполненные пункты Todo и актуальную диагностику токена на диск."""
+        try:
+            await self._todo_store.async_save(
+                {
+                    "completed_uids": sorted(self._completed_uids),
+                    "token_diagnostics": self.client.token_diagnostics,
+                }
+            )
+        except Exception as err:
+            _LOGGER.debug("Todo store save skipped: %s", err)
+
+    @callback
+    def _on_diag_updated(self, _diag: dict[str, Any]) -> None:
+        """Фоновая запись обновлённой диагностики токена в Store."""
+        self.hass.async_create_task(self._async_persist_store())
 
     def is_item_completed(self, uid: str) -> bool:
         """Проверяет, отмечен ли элемент (ДЗ или урок) как выполненный в Home Assistant."""
@@ -384,12 +405,7 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
             self._completed_uids.discard(uid)
 
         self.async_update_listeners()
-        try:
-            await self._todo_store.async_save(
-                {"completed_uids": sorted(self._completed_uids)}
-            )
-        except Exception as err:
-            _LOGGER.debug("Todo store save skipped: %s", err)
+        await self._async_persist_store()
 
     def tr_common(self, key: str, **kwargs: Any) -> str:
         """Возвращает локализованную строку из секции common."""
