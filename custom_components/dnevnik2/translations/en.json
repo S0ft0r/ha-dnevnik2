@@ -11,7 +11,7 @@
       },
       "settings": {
         "title": "Step 2 of 2 — Integration Settings",
-        "description": "✅ Authentication successful! Linked students found: **{students_summary}**.\n\nChoose the integration name and output format for homework and lessons.",
+        "description": "Authentication successful! Linked students found: **{students_summary}**.\n\nChoose the integration name and output format for homework and lessons.",
         "data": {
           "name": "Integration name",
           "homework_mode": "Homework output format",
@@ -47,7 +47,6 @@
         "data": {
           "homework_mode": "Homework output format",
           "lessons_mode": "Lessons schedule output format",
-          "balance_limit": "Low meal balance limit (₽)",
           "scan_interval": "Update interval (min.)",
           "token": "New X-JWT-Token (optional)"
         }
@@ -119,7 +118,7 @@
     "device_model_student": "Student",
     "student_device_name": "{student_name}",
     "student_with_group": "{name} ({group})",
-    "client_hint_companion": "💡 Setup opened from a mobile device (Home Assistant Companion). Mobile WebViews do not expose third-party site cookies or F12 DevTools — we recommend copying the X-JWT-Token from a desktop browser.",
+    "client_hint_companion": "Setup opened from a mobile device (Home Assistant Companion). Mobile WebViews do not expose third-party site cookies or F12 DevTools — we recommend copying the X-JWT-Token from a desktop browser.",
     "error_auth_expired": "X-JWT-Token session expired, re-authentication required",
     "log_setup_entry": "Starting St. Petersburg Electronic Diary integration: {title}",
     "log_token_refreshed": "X-JWT-Token session cookie automatically renewed by server",
