@@ -22,7 +22,15 @@
       "turnstile_last": {
         "default": "mdi:door-closed"
       },
-      "meal_balance": {
+      "meal_hot_balance": {
+        "default": "mdi:silverware-fork-knife"
+      },
+      "meal_buffet_balance": {
+        "default": "mdi:food-croissant"
+      }
+    },
+    "number": {
+      "balance_limit": {
         "default": "mdi:silverware-fork-knife"
       }
     },

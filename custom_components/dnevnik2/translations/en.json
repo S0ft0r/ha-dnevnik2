@@ -16,6 +16,7 @@
           "name": "Integration name",
           "homework_mode": "Homework output format",
           "lessons_mode": "Lessons schedule output format",
+          "balance_limit": "Low meal balance limit (₽)",
           "scan_interval": "Update interval (min)"
         }
       },
@@ -46,6 +47,7 @@
         "data": {
           "homework_mode": "Homework output format",
           "lessons_mode": "Lessons schedule output format",
+          "balance_limit": "Low meal balance limit (₽)",
           "scan_interval": "Update interval (min.)",
           "token": "New X-JWT-Token (optional)"
         }
@@ -80,8 +82,11 @@
       "turnstile_last": {
         "name": "Last turnstile event"
       },
-      "meal_balance": {
-        "name": "Meal balance"
+      "meal_hot_balance": {
+        "name": "Cafeteria"
+      },
+      "meal_buffet_balance": {
+        "name": "Buffet"
       }
     },
     "todo": {
@@ -101,6 +106,11 @@
       "refresh": {
         "name": "Refresh data"
       }
+    },
+    "number": {
+      "balance_limit": {
+        "name": "Meal balance limit"
+      }
     }
   },
   "common": {
@@ -117,8 +127,8 @@
     "no_lessons_text": "No lessons today",
     "no_grades_today_text": "No grades today",
     "room_short": "rm.",
-    "meal_hot_keywords": "горяч|hot",
-    "meal_buffet_keywords": "буфет|buffet|cafeteria",
+    "meal_hot_keywords": "горяч|столов|hot",
+    "meal_buffet_keywords": "буфет|доп|buffet|cafeteria",
     "direction_in_prefixes": "вход|приход|in|input|enter|entry|1",
     "direction_out_prefixes": "вых|уход|out|output|exit|leave|2"
   }

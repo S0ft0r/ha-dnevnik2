@@ -16,6 +16,7 @@
           "name": "Название интеграции",
           "homework_mode": "Формат вывода домашних заданий",
           "lessons_mode": "Формат вывода расписания уроков",
+          "balance_limit": "Лимит низкого баланса питания (₽)",
           "scan_interval": "Интервал обновления данных (мин.)"
         }
       },
@@ -46,6 +47,7 @@
         "data": {
           "homework_mode": "Формат вывода домашних заданий",
           "lessons_mode": "Формат вывода расписания уроков",
+          "balance_limit": "Лимит низкого баланса питания (₽)",
           "scan_interval": "Интервал обновления данных (мин.)",
           "token": "Новый токен X-JWT-Token (необязательно)"
         }
@@ -80,8 +82,11 @@
       "turnstile_last": {
         "name": "Последний проход через турникет"
       },
-      "meal_balance": {
-        "name": "Баланс питания"
+      "meal_hot_balance": {
+        "name": "Столовая"
+      },
+      "meal_buffet_balance": {
+        "name": "Буфет"
       }
     },
     "todo": {
@@ -101,6 +106,11 @@
       "refresh": {
         "name": "Обновить данные"
       }
+    },
+    "number": {
+      "balance_limit": {
+        "name": "Лимит баланса питания"
+      }
     }
   },
   "common": {
@@ -117,8 +127,8 @@
     "no_lessons_text": "На сегодня уроков нет",
     "no_grades_today_text": "Сегодня оценок нет",
     "room_short": "каб.",
-    "meal_hot_keywords": "горяч|hot",
-    "meal_buffet_keywords": "буфет|buffet|cafeteria",
+    "meal_hot_keywords": "горяч|столов|hot",
+    "meal_buffet_keywords": "буфет|доп|buffet|cafeteria",
     "direction_in_prefixes": "вход|приход|in|input|enter|entry|1",
     "direction_out_prefixes": "вых|уход|out|output|exit|leave|2"
   }

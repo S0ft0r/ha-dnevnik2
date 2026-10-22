@@ -37,12 +37,15 @@ LATE_CODE: Final = "30001"
 # События шины Home Assistant (hass.bus)
 EVENT_NEW_GRADE: Final = "dnevnik2_new_grade"
 EVENT_TURNSTILE: Final = "dnevnik2_turnstile"
+EVENT_LOW_BALANCE: Final = "dnevnik2_low_balance"
 
 # Ключи конфигурации (ConfigEntry.data и ConfigEntry.options)
 CONF_TOKEN: Final = "token"
+CONF_FALLBACK_TOKEN: Final = "fallback_token"
 CONF_SCAN_INTERVAL: Final = "scan_interval"
 CONF_HOMEWORK_MODE: Final = "homework_mode"
 CONF_LESSONS_MODE: Final = "lessons_mode"
+CONF_BALANCE_LIMIT: Final = "balance_limit"
 
 OUTPUT_MODE_SENSOR: Final = "sensor"
 OUTPUT_MODE_TODO: Final = "todo"
@@ -50,6 +53,11 @@ OUTPUT_MODES: Final = [OUTPUT_MODE_TODO, OUTPUT_MODE_SENSOR]
 
 DEFAULT_HOMEWORK_MODE: Final = OUTPUT_MODE_TODO
 DEFAULT_LESSONS_MODE: Final = OUTPUT_MODE_SENSOR
+
+DEFAULT_BALANCE_LIMIT: Final = 200
+MIN_BALANCE_LIMIT: Final = 0
+MAX_BALANCE_LIMIT: Final = 5000
+STEP_BALANCE_LIMIT: Final = 50
 
 DEFAULT_SCAN_INTERVAL_MIN: Final = 15
 MIN_SCAN_INTERVAL_MIN: Final = 5

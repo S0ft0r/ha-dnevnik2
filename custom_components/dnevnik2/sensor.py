@@ -10,6 +10,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -39,7 +40,8 @@ async def async_setup_entry(
                 Dnevnik2AverageGradeSensor(coordinator, entry, edu_id),
                 Dnevnik2LastGradeSensor(coordinator, entry, edu_id),
                 Dnevnik2TurnstileLastSensor(coordinator, entry, edu_id),
-                Dnevnik2MealBalanceSensor(coordinator, entry, edu_id),
+                Dnevnik2MealHotBalanceSensor(coordinator, entry, edu_id),
+                Dnevnik2MealBuffetBalanceSensor(coordinator, entry, edu_id),
             ]
         )
         if hw_as_sensor:
@@ -288,13 +290,14 @@ class Dnevnik2TurnstileLastSensor(_BaseStudentSensor):
         return st.turnstile_attributes if st else {}
 
 
-class Dnevnik2MealBalanceSensor(_BaseStudentSensor):
-    """Баланс лицевого счёта школьного питания."""
+class Dnevnik2MealHotBalanceSensor(_BaseStudentSensor):
+    """Баланс лицевого счёта столовой (горячего питания) в блоке Диагностика."""
 
     _attr_icon = "dnevnik2:meal-balance"
     _attr_device_class = SensorDeviceClass.MONETARY
     _attr_native_unit_of_measurement = "RUB"
     _attr_state_class = SensorStateClass.TOTAL
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(
         self,
@@ -302,17 +305,50 @@ class Dnevnik2MealBalanceSensor(_BaseStudentSensor):
         entry: ConfigEntry,
         education_id: str,
     ) -> None:
-        """Инициализация сенсора баланса питания."""
-        super().__init__(coordinator, entry, education_id, "meal_balance")
+        """Инициализация сенсора баланса столовой."""
+        super().__init__(coordinator, entry, education_id, "meal_hot_balance")
 
     @property
     def native_value(self) -> float | None:
-        """Остаток средств на счёте питания."""
+        """Остаток средств на счёте столовой (горячего питания)."""
         st = self._student
-        return st.meal_balance if st else None
+        return st.meal_hot_balance if st else None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Дополнительные реквизиты счёта питания."""
+        """Дополнительные реквизиты счёта столовой."""
         st = self._student
-        return st.meal_attributes if st else {}
+        return st.meal_hot_attributes if st else {}
+
+
+class Dnevnik2MealBuffetBalanceSensor(_BaseStudentSensor):
+    """Баланс лицевого счёта буфета в блоке Диагностика."""
+
+    _attr_icon = "dnevnik2:buffet-balance"
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_native_unit_of_measurement = "RUB"
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: Dnevnik2Coordinator,
+        entry: ConfigEntry,
+        education_id: str,
+    ) -> None:
+        """Инициализация сенсора баланса буфета."""
+        super().__init__(
+            coordinator, entry, education_id, "meal_buffet_balance"
+        )
+
+    @property
+    def native_value(self) -> float | None:
+        """Остаток средств на счёте буфета."""
+        st = self._student
+        return st.meal_buffet_balance if st else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Дополнительные реквизиты счёта буфета."""
+        st = self._student
+        return st.meal_buffet_attributes if st else {}

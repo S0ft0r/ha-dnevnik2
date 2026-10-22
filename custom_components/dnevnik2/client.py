@@ -87,23 +87,59 @@ def extract_jwt_token(raw_value: str | None) -> str | None:
     return None
 
 
-def jwt_exp_iat(token: str | None) -> tuple[int, int]:
-    """Декодирует поля (exp, iat) из payload JWT-токена без проверки подписи."""
+def decode_jwt_payload(token: str | None) -> dict[str, Any]:
+    """Декодирует JSON-payload JWT-токена без проверки подписи."""
     if not token:
-        return (0, 0)
+        return {}
     try:
         parts = token.split(".")
         if len(parts) != 3:
-            return (0, 0)
+            return {}
         payload_b64 = parts[1]
         padding = "=" * (-len(payload_b64) % 4)
         raw = base64.urlsafe_b64decode(payload_b64 + padding).decode("utf-8")
         data = json.loads(raw)
         if isinstance(data, dict):
-            return (int(data.get("exp") or 0), int(data.get("iat") or 0))
+            return data
     except Exception:
         pass
-    return (0, 0)
+    return {}
+
+
+def redact_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Маскирует идентификатор пользователя в декодированном JWT-payload для диагностики."""
+    safe: dict[str, Any] = {}
+    for key, val in payload.items():
+        if key.lower() in (
+            "userid",
+            "user_id",
+            "sub",
+            "id",
+            "lastid",
+            "last_id",
+            "email",
+            "phone",
+            "snils",
+        ):
+            safe[key] = "***" if val is not None else None
+        else:
+            safe[key] = val
+    return safe
+
+
+def jwt_exp_iat(token: str | None) -> tuple[int, int]:
+    """Декодирует поля времени активности (lastActivity/exp, iat) из payload JWT-токена."""
+    data = decode_jwt_payload(token)
+    if not data:
+        return (0, 0)
+    ts = int(
+        data.get("lastActivity")
+        or data.get("last_activity")
+        or data.get("exp")
+        or 0
+    )
+    iat = int(data.get("iat") or 0)
+    return (ts, iat)
 
 
 def clear_petersburgedu_cookies(session: ClientSession | None) -> None:
@@ -181,38 +217,191 @@ class Dnevnik2Client:
         self,
         session: ClientSession,
         token: str | None = None,
-        on_token_refreshed: Callable[[str], None] | None = None,
+        fallback_token: str | None = None,
+        on_token_refreshed: Callable[[str, str], None] | None = None,
     ) -> None:
         """Инициализация HTTP-клиента."""
         self._session = session
         self._token = extract_jwt_token(token) or (token or "").strip()
+        fb_clean = (
+            extract_jwt_token(fallback_token) or (fallback_token or "").strip()
+        )
+        self._fallback_token: str = fb_clean or self._token
         self._on_token_refreshed = on_token_refreshed
         self._timeout = ClientTimeout(total=REQUEST_TIMEOUT_SEC)
+        self._rotations_verified: int = 0
+        self._rotations_rejected: int = 0
+        self._last_set_cookies_diag: list[dict[str, Any]] = []
 
     @property
     def token(self) -> str:
         """Текущий JWT-токен."""
         return self._token
 
+    @property
+    def fallback_token(self) -> str:
+        """Резервный проверенный JWT-токен."""
+        return self._fallback_token
+
+    @property
+    def token_diagnostics(self) -> dict[str, Any]:
+        """Обезличенная диагностика текущего JWT-токена и заголовков Set-Cookie."""
+        return {
+            "current_jwt_claims": redact_jwt_payload(
+                decode_jwt_payload(self._token)
+            ),
+            "fallback_jwt_claims": redact_jwt_payload(
+                decode_jwt_payload(self._fallback_token)
+            ),
+            "has_distinct_fallback": bool(
+                self._fallback_token and self._fallback_token != self._token
+            ),
+            "rotations_verified": self._rotations_verified,
+            "rotations_rejected": self._rotations_rejected,
+            "last_set_cookies_on_child_list": list(self._last_set_cookies_diag),
+        }
+
     def set_token(self, token: str) -> None:
         """Обновляет токен в памяти клиента."""
-        self._token = extract_jwt_token(token) or token.strip()
+        cleaned = extract_jwt_token(token) or token.strip()
+        self._token = cleaned
+        if cleaned:
+            self._fallback_token = cleaned
 
-    def _headers(self, include_auth: bool = True) -> dict[str, str]:
+    def _headers(
+        self, include_auth: bool = True, token_override: str | None = None
+    ) -> dict[str, str]:
         headers = {
             "User-Agent": USER_AGENT,
             "Accept": "application/json, text/plain, */*",
             "X-Requested-With": "XMLHttpRequest",
             "Referer": REFERER_URL,
         }
-        if include_auth and self._token:
-            headers[SESSION_COOKIE] = self._token
-            headers["Cookie"] = f"{SESSION_COOKIE}={self._token}"
+        tok = token_override if token_override is not None else self._token
+        if include_auth and tok:
+            headers[SESSION_COOKIE] = tok
+            headers["Cookie"] = f"{SESSION_COOKIE}={tok}"
         return headers
 
     def _clear_session_cookie_jar(self) -> None:
         """Очищает CookieJar сессии aiohttp (включая домен petersburgedu.ru без ведущей точки)."""
         clear_petersburgedu_cookies(self._session)
+
+    async def _async_probe_token(self, candidate: str) -> bool:
+        """Проверяет, что новый токен из Set-Cookie реально принимается эндпоинтом related-child-list."""
+        url = f"{BASE_URL}{EP_RELATED_CHILDREN}"
+        self._clear_session_cookie_jar()
+        try:
+            async with self._session.get(
+                url,
+                params={"p_page": "1"},
+                headers=self._headers(
+                    include_auth=True, token_override=candidate
+                ),
+                timeout=self._timeout,
+                allow_redirects=False,
+                ssl=False,
+            ) as resp:
+                self._clear_session_cookie_jar()
+                if resp.status != 200:
+                    return False
+                payload = await resp.json(content_type=None)
+                if not isinstance(payload, dict):
+                    return False
+                data = payload.get("data")
+                if isinstance(data, dict) and isinstance(
+                    data.get("items"), list
+                ):
+                    return len(data["items"]) > 0
+                return False
+        except Exception:
+            return False
+
+    async def _async_inspect_and_rotate_cookies(
+        self, set_cookie_headers: list[str]
+    ) -> None:
+        """Анализирует Set-Cookie от related-child-list и применяет новый токен только после 200 OK проверки."""
+        cur_payload = decode_jwt_payload(self._token)
+        cur_user_id = cur_payload.get("userId") or cur_payload.get("user_id")
+        cur_ts, _ = jwt_exp_iat(self._token)
+
+        diag_entries: list[dict[str, Any]] = []
+        valid_candidates: list[tuple[int, int, str]] = []
+
+        for idx, hdr in enumerate(set_cookie_headers):
+            first_part = hdr.split(";", 1)[0].strip()
+            cookie_name = (
+                first_part.split("=", 1)[0].strip()
+                if "=" in first_part
+                else first_part
+            )
+            path_val = ""
+            domain_val = ""
+            for attr in hdr.split(";")[1:]:
+                kv = attr.strip().split("=", 1)
+                if len(kv) == 2:
+                    k_low = kv[0].strip().lower()
+                    if k_low == "path":
+                        path_val = kv[1].strip()
+                    elif k_low == "domain":
+                        domain_val = kv[1].strip()
+
+            match = _SET_COOKIE_JWT_RE.search(hdr)
+            if not match:
+                diag_entries.append(
+                    {
+                        "cookie_name": cookie_name,
+                        "path": path_val,
+                        "domain": domain_val,
+                        "is_jwt": False,
+                    }
+                )
+                continue
+
+            cand = match.group(1).strip()
+            cand_payload = decode_jwt_payload(cand)
+            cand_user_id = cand_payload.get("userId") or cand_payload.get(
+                "user_id"
+            )
+            cand_ts, _ = jwt_exp_iat(cand)
+            same_as_cur = cand == self._token
+            user_id_ok = (not cur_user_id) or (cand_user_id == cur_user_id)
+            ts_ok = cur_ts == 0 or (cand_ts > cur_ts)
+
+            diag_entries.append(
+                {
+                    "cookie_name": cookie_name,
+                    "path": path_val,
+                    "domain": domain_val,
+                    "is_jwt": True,
+                    "same_as_current": same_as_cur,
+                    "user_id_matches": user_id_ok,
+                    "last_activity_advanced": ts_ok,
+                    "claims": redact_jwt_payload(cand_payload),
+                }
+            )
+
+            if not same_as_cur and user_id_ok and ts_ok:
+                valid_candidates.append((cand_ts, idx, cand))
+
+        self._last_set_cookies_diag = diag_entries
+        if not valid_candidates:
+            return
+
+        valid_candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        seen_cands: set[str] = set()
+        for _, _, cand in valid_candidates:
+            if cand in seen_cands:
+                continue
+            seen_cands.add(cand)
+            if await self._async_probe_token(cand):
+                self._fallback_token = self._token
+                self._token = cand
+                self._rotations_verified += 1
+                if self._on_token_refreshed is not None:
+                    self._on_token_refreshed(cand, self._fallback_token)
+                return
+            self._rotations_rejected += 1
 
     async def _request(
         self,
@@ -221,7 +410,7 @@ class Dnevnik2Client:
         *,
         include_auth: bool = True,
     ) -> dict[str, Any]:
-        """Выполняет GET-запрос к API дневника с фиксированным X-JWT-Token и изоляцией CookieJar."""
+        """Выполняет GET-запрос к API дневника с проверенной ротацией X-JWT-Token и изоляцией CookieJar."""
         url = f"{BASE_URL}{path}"
         self._clear_session_cookie_jar()
         try:
@@ -233,9 +422,26 @@ class Dnevnik2Client:
                 allow_redirects=False,
                 ssl=False,
             ) as response:
+                set_cookie_headers = list(
+                    response.headers.getall("Set-Cookie", [])
+                )
                 self._clear_session_cookie_jar()
 
                 if response.status in (301, 302, 303, 307, 308, 401, 403):
+                    if (
+                        include_auth
+                        and self._fallback_token
+                        and self._fallback_token != self._token
+                        and await self._async_probe_token(self._fallback_token)
+                    ):
+                        self._token = self._fallback_token
+                        if self._on_token_refreshed is not None:
+                            self._on_token_refreshed(
+                                self._token, self._fallback_token
+                            )
+                        return await self._request(
+                            path, params=params, include_auth=include_auth
+                        )
                     raise Dnevnik2AuthError(f"HTTP {response.status}")
 
                 if response.status >= 500:
@@ -255,6 +461,16 @@ class Dnevnik2Client:
                     raise Dnevnik2ConnectionError("Unexpected JSON payload root")
 
                 data = payload.get("data")
+                if (
+                    include_auth
+                    and path == EP_RELATED_CHILDREN
+                    and set_cookie_headers
+                    and isinstance(data, (dict, list))
+                ):
+                    await self._async_inspect_and_rotate_cookies(
+                        set_cookie_headers
+                    )
+
                 if isinstance(data, dict):
                     return data
                 if isinstance(data, list):

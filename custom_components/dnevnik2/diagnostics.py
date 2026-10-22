@@ -10,11 +10,12 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 
-from .const import CONF_TOKEN, DOMAIN, SESSION_COOKIE
+from .const import CONF_FALLBACK_TOKEN, CONF_TOKEN, DOMAIN, SESSION_COOKIE
 from .manager import Dnevnik2Coordinator
 
 TO_REDACT = {
     CONF_TOKEN,
+    CONF_FALLBACK_TOKEN,
     SESSION_COOKIE,
     "full_name",
     "short_name",
@@ -76,6 +77,9 @@ def _build_common_diagnostics(
                 coordinator.scan_interval_minutes if coordinator else None
             ),
             "students_count": len(students_dump),
+            "token_diagnostics": (
+                coordinator.client.token_diagnostics if coordinator else None
+            ),
         },
         "students": students_dump,
     }

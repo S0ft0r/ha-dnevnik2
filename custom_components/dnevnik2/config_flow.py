@@ -39,11 +39,18 @@ clear_petersburgedu_cookies = getattr(
 )
 extract_jwt_token = getattr(_client_mod, "extract_jwt_token", None)
 
+CONF_BALANCE_LIMIT = getattr(
+    _const_mod, "CONF_BALANCE_LIMIT", "balance_limit"
+)
+CONF_FALLBACK_TOKEN = getattr(
+    _const_mod, "CONF_FALLBACK_TOKEN", "fallback_token"
+)
 CONF_HOMEWORK_MODE = getattr(_const_mod, "CONF_HOMEWORK_MODE", "homework_mode")
 CONF_LESSONS_MODE = getattr(_const_mod, "CONF_LESSONS_MODE", "lessons_mode")
 CONF_NAME = getattr(_const_mod, "CONF_NAME", "name")
 CONF_SCAN_INTERVAL = getattr(_const_mod, "CONF_SCAN_INTERVAL", "scan_interval")
 CONF_TOKEN = getattr(_const_mod, "CONF_TOKEN", "token")
+DEFAULT_BALANCE_LIMIT = getattr(_const_mod, "DEFAULT_BALANCE_LIMIT", 200)
 DEFAULT_HOMEWORK_MODE = getattr(_const_mod, "DEFAULT_HOMEWORK_MODE", "todo")
 DEFAULT_LESSONS_MODE = getattr(_const_mod, "DEFAULT_LESSONS_MODE", "todo")
 DEFAULT_SCAN_INTERVAL_MIN = getattr(_const_mod, "DEFAULT_SCAN_INTERVAL_MIN", 30)
@@ -51,9 +58,12 @@ DOMAIN = getattr(_const_mod, "DOMAIN", "dnevnik2")
 LOGIN_PAGE_URL = getattr(
     _const_mod, "LOGIN_PAGE_URL", "https://dnevnik2.petersburgedu.ru/login"
 )
+MAX_BALANCE_LIMIT = getattr(_const_mod, "MAX_BALANCE_LIMIT", 5000)
 MAX_SCAN_INTERVAL_MIN = getattr(_const_mod, "MAX_SCAN_INTERVAL_MIN", 180)
+MIN_BALANCE_LIMIT = getattr(_const_mod, "MIN_BALANCE_LIMIT", 0)
 MIN_SCAN_INTERVAL_MIN = getattr(_const_mod, "MIN_SCAN_INTERVAL_MIN", 10)
 OUTPUT_MODES = getattr(_const_mod, "OUTPUT_MODES", ("todo", "sensor"))
+STEP_BALANCE_LIMIT = getattr(_const_mod, "STEP_BALANCE_LIMIT", 50)
 
 _TRANSLATIONS_FILE = Path(__file__).parent / "translations" / "ru.json"
 
@@ -314,14 +324,19 @@ class Dnevnik2ConfigFlow(ConfigFlow, domain=DOMAIN):
             scan_interval = int(
                 user_input.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_MIN)
             )
+            balance_limit = int(
+                user_input.get(CONF_BALANCE_LIMIT, DEFAULT_BALANCE_LIMIT)
+            )
             return self.async_create_entry(
                 title=title,
                 data={
                     CONF_NAME: title,
                     CONF_TOKEN: self._validated_token,
+                    CONF_FALLBACK_TOKEN: self._validated_token,
                     CONF_HOMEWORK_MODE: homework_mode,
                     CONF_LESSONS_MODE: lessons_mode,
                     CONF_SCAN_INTERVAL: scan_interval,
+                    CONF_BALANCE_LIMIT: balance_limit,
                 },
             )
 
@@ -344,6 +359,17 @@ class Dnevnik2ConfigFlow(ConfigFlow, domain=DOMAIN):
                         options=list(OUTPUT_MODES),
                         translation_key="output_mode",
                         mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Optional(
+                    CONF_BALANCE_LIMIT, default=DEFAULT_BALANCE_LIMIT
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=MIN_BALANCE_LIMIT,
+                        max=MAX_BALANCE_LIMIT,
+                        step=STEP_BALANCE_LIMIT,
+                        unit_of_measurement="RUB",
+                        mode=selector.NumberSelectorMode.BOX,
                     )
                 ),
                 vol.Optional(
@@ -405,6 +431,7 @@ class Dnevnik2ConfigFlow(ConfigFlow, domain=DOMAIN):
                     new_data = {
                         **self._reauth_entry.data,
                         CONF_TOKEN: client.token or token,
+                        CONF_FALLBACK_TOKEN: token,
                     }
                     self.hass.config_entries.async_update_entry(
                         self._reauth_entry, data=new_data
@@ -466,6 +493,9 @@ class Dnevnik2OptionsFlow(OptionsFlow):
             new_options[CONF_SCAN_INTERVAL] = int(
                 user_input.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_MIN)
             )
+            new_options[CONF_BALANCE_LIMIT] = int(
+                user_input.get(CONF_BALANCE_LIMIT, DEFAULT_BALANCE_LIMIT)
+            )
 
             raw_token = str(user_input.get(CONF_TOKEN) or "").strip()
             if raw_token:
@@ -477,9 +507,7 @@ class Dnevnik2OptionsFlow(OptionsFlow):
                 if not token:
                     errors["base"] = "invalid_token_format"
                 else:
-                    session = aiohttp_client.async_get_clientsession(
-                        self.hass, verify_ssl=False
-                    )
+                    session = _get_isolated_session(self.hass)
                     client = Dnevnik2Client(session, token=token)
                     try:
                         await _async_validate_students(client)
@@ -493,6 +521,7 @@ class Dnevnik2OptionsFlow(OptionsFlow):
                         new_data = {
                             **self._entry.data,
                             CONF_TOKEN: client.token or token,
+                            CONF_FALLBACK_TOKEN: token,
                         }
                         self.hass.config_entries.async_update_entry(
                             self._entry, data=new_data
@@ -513,6 +542,10 @@ class Dnevnik2OptionsFlow(OptionsFlow):
             CONF_SCAN_INTERVAL,
             self._entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_MIN),
         )
+        current_balance_limit = self._entry.options.get(
+            CONF_BALANCE_LIMIT,
+            self._entry.data.get(CONF_BALANCE_LIMIT, DEFAULT_BALANCE_LIMIT),
+        )
 
         schema = vol.Schema(
             {
@@ -532,6 +565,17 @@ class Dnevnik2OptionsFlow(OptionsFlow):
                         options=list(OUTPUT_MODES),
                         translation_key="output_mode",
                         mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Required(
+                    CONF_BALANCE_LIMIT, default=current_balance_limit
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=MIN_BALANCE_LIMIT,
+                        max=MAX_BALANCE_LIMIT,
+                        step=STEP_BALANCE_LIMIT,
+                        unit_of_measurement="RUB",
+                        mode=selector.NumberSelectorMode.BOX,
                     )
                 ),
                 vol.Required(

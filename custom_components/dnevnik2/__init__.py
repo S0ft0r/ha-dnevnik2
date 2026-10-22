@@ -33,6 +33,7 @@ PLATFORMS: list[Platform] = [
     Platform.SENSOR,
     Platform.BINARY_SENSOR,
     Platform.BUTTON,
+    Platform.NUMBER,
     Platform.TODO,
 ]
 
@@ -58,10 +59,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_init_translations()
     _LOGGER.info("%s", coordinator.tr_log("log_setup_entry", title=entry.title))
 
-    await coordinator.async_config_entry_first_refresh()
-
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except Exception:
+        hass.data[DOMAIN].pop(entry.entry_id, None)
+        raise
 
     js_file = Path(__file__).parent / "frontend" / f"{DOMAIN}-icons.js"
     if js_file.is_file() and getattr(hass, "http", None) is not None:
@@ -164,11 +168,14 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Перезагрузка при изменении настроек (пропуская фоновое автообновление токена)."""
+    """Перезагрузка при изменении настроек (пропуская фоновое автообновление токена и лимита баланса)."""
     coordinator: Dnevnik2Coordinator | None = hass.data.get(DOMAIN, {}).get(
         entry.entry_id
     )
     if coordinator and not coordinator.should_reload_on_entry_update(entry):
+        if coordinator.data:
+            coordinator._emit_low_balance_events(None, coordinator.data)
+        coordinator.async_update_listeners()
         return
     await hass.config_entries.async_reload(entry.entry_id)
 
@@ -186,6 +193,9 @@ def _remove_stale_mode_entities(
 
     for ent in list(er.async_entries_for_config_entry(ent_reg, entry.entry_id)):
         uid = ent.unique_id or ""
+        if uid.endswith("_meal_balance"):
+            ent_reg.async_remove(ent.entity_id)
+            continue
         if uid.endswith("_homework") or uid.endswith("_homework_tomorrow"):
             if ent.domain == "sensor" and hw_mode != OUTPUT_MODE_SENSOR:
                 ent_reg.async_remove(ent.entity_id)

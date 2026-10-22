@@ -34,17 +34,23 @@ from .client import (
 )
 from .const import (
     ABSENCE_CODE,
+    CONF_BALANCE_LIMIT,
+    CONF_FALLBACK_TOKEN,
     CONF_HOMEWORK_MODE,
     CONF_LESSONS_MODE,
     CONF_SCAN_INTERVAL,
     CONF_TOKEN,
+    DEFAULT_BALANCE_LIMIT,
     DEFAULT_HOMEWORK_MODE,
     DEFAULT_LESSONS_MODE,
     DEFAULT_SCAN_INTERVAL_MIN,
     DOMAIN,
+    EVENT_LOW_BALANCE,
     EVENT_NEW_GRADE,
     EVENT_TURNSTILE,
     LATE_CODE,
+    MAX_BALANCE_LIMIT,
+    MIN_BALANCE_LIMIT,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -163,7 +169,11 @@ class StudentData:
     last_turnstile_event: str | None = None
     turnstile_attributes: dict[str, Any] = field(default_factory=dict)
     meal_balance: float | None = None
+    meal_hot_balance: float | None = None
+    meal_buffet_balance: float | None = None
     meal_attributes: dict[str, Any] = field(default_factory=dict)
+    meal_hot_attributes: dict[str, Any] = field(default_factory=dict)
+    meal_buffet_attributes: dict[str, Any] = field(default_factory=dict)
 
 
 def _pick_str(source: dict[str, Any], *keys: str) -> str:
@@ -221,6 +231,7 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
         self._previous_students: dict[str, StudentData] | None = None
         self._known_grade_uids: dict[str, set[str]] = {}
         self._detected_today_grades: dict[tuple[str, date], list[dict[str, Any]]] = {}
+        self._low_balance_alerted: dict[tuple[str, str], float] = {}
 
         scan_minutes = int(
             entry.options.get(
@@ -229,6 +240,7 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
             )
         )
         token = str(entry.data.get(CONF_TOKEN, ""))
+        fallback_token = str(entry.data.get(CONF_FALLBACK_TOKEN, "") or token)
         clear_petersburgedu_cookies(
             async_get_clientsession(hass, verify_ssl=False)
         )
@@ -240,6 +252,7 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
         self.client = Dnevnik2Client(
             session=session,
             token=token,
+            fallback_token=fallback_token,
             on_token_refreshed=self._on_token_refreshed,
         )
         self._loaded_signature = self.config_signature
@@ -282,6 +295,27 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
         )
 
     @property
+    def balance_limit(self) -> int:
+        """Настроенный порог низкого баланса питания (Столовая / Буфет) в рублях."""
+        return int(
+            self.entry.options.get(
+                CONF_BALANCE_LIMIT,
+                self.entry.data.get(CONF_BALANCE_LIMIT, DEFAULT_BALANCE_LIMIT),
+            )
+        )
+
+    async def async_set_balance_limit(self, new_limit: int) -> None:
+        """Обновляет порог низкого баланса питания с основного устройства без перезагрузки."""
+        clamped = max(MIN_BALANCE_LIMIT, min(MAX_BALANCE_LIMIT, int(new_limit)))
+        new_options = {**self.entry.options, CONF_BALANCE_LIMIT: clamped}
+        self.hass.config_entries.async_update_entry(
+            self.entry, options=new_options
+        )
+        if self.data:
+            self._emit_low_balance_events(None, self.data)
+        self.async_update_listeners()
+
+    @property
     def config_signature(self) -> tuple[str, str, int]:
         """Сигнатура пользовательских настроек для фильтрации фонового обновления токена."""
         return (
@@ -293,7 +327,10 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
     def should_reload_on_entry_update(self, entry: ConfigEntry) -> bool:
         """Возвращает True только если изменились настройки или токен был заменён вручную."""
         new_token = str(entry.data.get(CONF_TOKEN, ""))
-        if new_token and new_token != self.client.token:
+        if new_token and new_token not in (
+            self.client.token,
+            self.client.fallback_token,
+        ):
             return True
         return self.config_signature != self._loaded_signature
 
@@ -374,11 +411,22 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
         return str(val) if val else key
 
     @callback
-    def _on_token_refreshed(self, new_token: str) -> None:
-        """Сохраняет обновлённый Set-Cookie X-JWT-Token в ConfigEntry.data без перезагрузки."""
-        if not new_token or new_token == self.entry.data.get(CONF_TOKEN):
+    def _on_token_refreshed(
+        self, new_token: str, fallback_token: str
+    ) -> None:
+        """Сохраняет проверенный обновлённый X-JWT-Token и резервный токен в ConfigEntry.data без перезагрузки."""
+        if not new_token:
             return
-        new_data = {**self.entry.data, CONF_TOKEN: new_token}
+        if (
+            new_token == self.entry.data.get(CONF_TOKEN)
+            and fallback_token == self.entry.data.get(CONF_FALLBACK_TOKEN)
+        ):
+            return
+        new_data = {
+            **self.entry.data,
+            CONF_TOKEN: new_token,
+            CONF_FALLBACK_TOKEN: fallback_token or new_token,
+        }
         self.hass.config_entries.async_update_entry(self.entry, data=new_data)
         _LOGGER.debug("%s", self.tr_log("log_token_refreshed"))
 
@@ -455,8 +503,98 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
         self._prune_completed_uids(students)
         if self._previous_students is not None:
             self._emit_change_events(self._previous_students, students)
+        else:
+            self._init_low_balance_state(students)
         self._previous_students = students
         return students
+
+    @callback
+    def _init_low_balance_state(
+        self, students: dict[str, StudentData]
+    ) -> None:
+        """Фиксирует стартовое состояние балансов при загрузке интеграции."""
+        limit = float(self.balance_limit)
+        if limit <= 0:
+            self._low_balance_alerted.clear()
+            return
+        for edu_id, st in students.items():
+            for acc_key, val in (
+                ("hot", st.meal_hot_balance),
+                ("buffet", st.meal_buffet_balance),
+            ):
+                if val is not None and val < limit:
+                    self._low_balance_alerted[(edu_id, acc_key)] = val
+
+    @callback
+    def _emit_low_balance_events(
+        self,
+        prev_map: dict[str, StudentData] | None,
+        curr_map: dict[str, StudentData],
+    ) -> None:
+        """Генерирует событие dnevnik2_low_balance при снижении баланса Столовой или Буфета ниже лимита."""
+        limit = float(self.balance_limit)
+        if limit <= 0:
+            self._low_balance_alerted.clear()
+            return
+
+        for edu_id, curr in curr_map.items():
+            prev = prev_map.get(edu_id) if prev_map else None
+            dev_id = self.student_device_ids.get(edu_id)
+            checks = (
+                (
+                    "hot",
+                    "meal_hot_balance",
+                    curr.meal_hot_balance,
+                    prev.meal_hot_balance if prev else None,
+                ),
+                (
+                    "buffet",
+                    "meal_buffet_balance",
+                    curr.meal_buffet_balance,
+                    prev.meal_buffet_balance if prev else None,
+                ),
+            )
+            for acc_key, sensor_key, cur_val, prev_val in checks:
+                if cur_val is None:
+                    continue
+                alert_key = (edu_id, acc_key)
+                if cur_val >= limit:
+                    self._low_balance_alerted.pop(alert_key, None)
+                    continue
+
+                last_alerted = self._low_balance_alerted.get(alert_key)
+                crossed_down = prev_val is not None and prev_val >= limit
+                dropped_further = (
+                    last_alerted is not None and cur_val < last_alerted
+                )
+                if (
+                    last_alerted is None
+                    or crossed_down
+                    or dropped_further
+                ):
+                    self._low_balance_alerted[alert_key] = cur_val
+                    self.hass.bus.async_fire(
+                        EVENT_LOW_BALANCE,
+                        {
+                            "entry_id": self.entry.entry_id,
+                            "device_id": dev_id,
+                            "education_id": edu_id,
+                            "first_name": curr.first_name,
+                            "short_name": curr.short_name,
+                            "full_name": curr.full_name,
+                            "institution_name": curr.institution_name,
+                            "group_name": curr.group_name,
+                            "account": acc_key,
+                            "account_name": self.tr_entity_name(
+                                "sensor", sensor_key
+                            ),
+                            "balance": cur_val,
+                            "previous_balance": prev_val,
+                            "limit": self.balance_limit,
+                            "hot_balance": curr.meal_hot_balance,
+                            "buffet_balance": curr.meal_buffet_balance,
+                        },
+                    )
 
     def _prune_completed_uids(self, students: dict[str, StudentData]) -> None:
         """Оставляет в памяти только UID актуальных домашних заданий и уроков."""
@@ -540,6 +678,8 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
                         "datetime": curr.last_turnstile_event,
                     },
                 )
+
+        self._emit_low_balance_events(prev_map, curr_map)
 
     def _build_homework_attributes(
         self, tasks: list[HomeworkTask]
@@ -1161,6 +1301,14 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
             parsed_accounts: list[dict[str, Any]] = []
             by_type: dict[str, float] = {}
             customer_id = ""
+            hot_val: float | None = None
+            buffet_val: float | None = None
+            hot_name = ""
+            buffet_name = ""
+            unmatched: list[tuple[str, float]] = []
+
+            hot_kw = self.tr_list("meal_hot_keywords")
+            buf_kw = self.tr_list("meal_buffet_keywords")
 
             for acc in accounts:
                 if not isinstance(acc, dict):
@@ -1190,12 +1338,18 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
                     if acc_name:
                         by_type[acc_name] = val_float
                         low_name = acc_name.lower()
-                        hot_kw = self.tr_list("meal_hot_keywords")
-                        buf_kw = self.tr_list("meal_buffet_keywords")
-                        if any(k in low_name for k in hot_kw):
-                            by_type["hot_balance"] = val_float
-                        elif any(k in low_name for k in buf_kw):
+                        if any(k in low_name for k in buf_kw):
+                            buffet_val = val_float
+                            buffet_name = acc_name
                             by_type["buffet_balance"] = val_float
+                        elif any(k in low_name for k in hot_kw):
+                            hot_val = val_float
+                            hot_name = acc_name
+                            by_type["hot_balance"] = val_float
+                        else:
+                            unmatched.append((acc_name, val_float))
+                    else:
+                        unmatched.append(("", val_float))
 
                 cust = _pick_str(acc, "customer_name", "id")
                 if cust and not customer_id:
@@ -1210,16 +1364,38 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
                     }
                 )
 
+            for u_name, u_val in unmatched:
+                if hot_val is None:
+                    hot_val = u_val
+                    hot_name = u_name
+                    by_type["hot_balance"] = u_val
+                elif buffet_val is None:
+                    buffet_val = u_val
+                    buffet_name = u_name
+                    by_type["buffet_balance"] = u_val
+
             if has_numeric:
                 student.meal_balance = round(total_sum, 2)
-                attrs: dict[str, Any] = {
+                student.meal_hot_balance = hot_val
+                student.meal_buffet_balance = buffet_val
+                base_attrs: dict[str, Any] = {
                     "total_balance": round(total_sum, 2),
+                    "hot_balance": hot_val,
+                    "buffet_balance": buffet_val,
                     "accounts": parsed_accounts,
                 }
                 if customer_id:
-                    attrs["account_number"] = customer_id
-                attrs.update(by_type)
-                student.meal_attributes = attrs
+                    base_attrs["account_number"] = customer_id
+                base_attrs.update(by_type)
+                student.meal_attributes = base_attrs
+                student.meal_hot_attributes = {
+                    "account_type": hot_name,
+                    **base_attrs,
+                }
+                student.meal_buffet_attributes = {
+                    "account_type": buffet_name,
+                    **base_attrs,
+                }
                 return
 
         items = (
@@ -1231,27 +1407,41 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
             items[0] if items and isinstance(items[0], dict) else meal_raw
         )
         for key in (
+            "hot_balance",
             "balance",
             "total_balance",
-            "hot_balance",
             "amount",
             "sum",
         ):
             val = source.get(key)
             if isinstance(val, (int, float)) and not isinstance(val, bool):
                 student.meal_balance = round(float(val), 2)
+                student.meal_hot_balance = student.meal_balance
                 break
             if isinstance(val, str):
                 try:
                     student.meal_balance = round(
                         float(val.replace(",", ".").strip()), 2
                     )
+                    student.meal_hot_balance = student.meal_balance
                     break
                 except ValueError:
                     continue
+        raw_buf = source.get("buffet_balance")
+        if isinstance(raw_buf, (int, float)) and not isinstance(raw_buf, bool):
+            student.meal_buffet_balance = round(float(raw_buf), 2)
+        elif isinstance(raw_buf, str):
+            try:
+                student.meal_buffet_balance = round(
+                    float(raw_buf.replace(",", ".").strip()), 2
+                )
+            except ValueError:
+                pass
         student.meal_attributes = {
             k: v
             for k, v in source.items()
             if isinstance(v, (str, int, float, bool))
             and k not in ("token", "zsign")
         }
+        student.meal_hot_attributes = dict(student.meal_attributes)
+        student.meal_buffet_attributes = dict(student.meal_attributes)
