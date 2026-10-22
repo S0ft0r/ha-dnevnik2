@@ -11,10 +11,15 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from aiohttp import DummyCookieJar
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.aiohttp_client import (
+    async_create_clientsession,
+    async_get_clientsession,
+)
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -23,6 +28,7 @@ from .client import (
     Dnevnik2AuthError,
     Dnevnik2Client,
     Dnevnik2ConnectionError,
+    clear_petersburgedu_cookies,
     normalize_group_name,
     unwrap_scalar,
 )
@@ -213,6 +219,8 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
         )
         self._completed_uids: set[str] = set()
         self._previous_students: dict[str, StudentData] | None = None
+        self._known_grade_uids: dict[str, set[str]] = {}
+        self._detected_today_grades: dict[tuple[str, date], list[dict[str, Any]]] = {}
 
         scan_minutes = int(
             entry.options.get(
@@ -221,8 +229,16 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
             )
         )
         token = str(entry.data.get(CONF_TOKEN, ""))
+        clear_petersburgedu_cookies(
+            async_get_clientsession(hass, verify_ssl=False)
+        )
+        session = async_create_clientsession(
+            hass,
+            verify_ssl=False,
+            cookie_jar=DummyCookieJar(),
+        )
         self.client = Dnevnik2Client(
-            session=async_get_clientsession(hass, verify_ssl=False),
+            session=session,
             token=token,
             on_token_refreshed=self._on_token_refreshed,
         )
@@ -414,13 +430,15 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
         except Dnevnik2ConnectionError as err:
             raise UpdateFailed(str(err)) from err
 
-        try:
-            claims_raw = await self.client.async_get_claims()
-        except Exception as err:
-            _LOGGER.debug("Claims fetch skipped: %s", err)
-            claims_raw = []
-
-        students = self._parse_students(children_raw, claims_raw)
+        students = self._parse_students(children_raw, [])
+        if any(not st.institution_name for st in students.values()):
+            try:
+                claims_raw = await self.client.async_get_claims()
+            except Exception as err:
+                _LOGGER.debug("Claims fetch skipped: %s", err)
+                claims_raw = []
+            if claims_raw:
+                students = self._parse_students(children_raw, claims_raw)
         now_spb = datetime.now(SPB_TZ)
         today_spb = now_spb.date()
         period_start = today_spb - timedelta(days=90)
@@ -730,7 +748,7 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
             marks_raw = await self.client.async_get_marks(
                 edu_id, period_start, today_spb
             )
-            self._apply_marks(student, marks_raw)
+            self._apply_marks(student, marks_raw, today_spb)
         except Exception as err:
             _LOGGER.debug("Marks fetch skipped for %s: %s", edu_id, err)
 
@@ -765,13 +783,27 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
             _LOGGER.debug("Meal balance fetch skipped for %s: %s", edu_id, err)
 
     def _apply_marks(
-        self, student: StudentData, marks_raw: list[dict[str, Any]]
+        self,
+        student: StudentData,
+        marks_raw: list[dict[str, Any]],
+        today_spb: date,
     ) -> None:
         numeric_grades: list[int] = []
         by_subject: dict[str, list[int]] = {}
         absences = 0
         lates = 0
         graded_rows: list[tuple[date, int, dict[str, Any], str]] = []
+        today_grades: list[dict[str, Any]] = []
+        today_seen_keys: set[str] = set()
+
+        edu_id = student.education_id
+        known_set = self._known_grade_uids.get(edu_id)
+        current_set: set[str] = set()
+        detected_key = (edu_id, today_spb)
+        for old_key in list(self._detected_today_grades):
+            if old_key[0] == edu_id and old_key[1] != today_spb:
+                self._detected_today_grades.pop(old_key, None)
+        detected_list = self._detected_today_grades.setdefault(detected_key, [])
 
         for idx, row in enumerate(marks_raw):
             code = _pick_str(
@@ -802,13 +834,75 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
                     numeric_grades.append(grade_num)
                     subj = _pick_str(row, "subject_name", "subject") or "—"
                     by_subject.setdefault(subj, []).append(grade_num)
-                    mark_dt = (
-                        _parse_lesson_date(
-                            _pick_str(row, "date", "date_estimate", "lesson_date")
-                        )
-                        or date.min
+                    date_str = _pick_str(
+                        row, "date", "date_estimate", "lesson_date"
                     )
+                    mark_dt = _parse_lesson_date(date_str) or date.min
+                    created_dt = _parse_lesson_date(
+                        _pick_str(
+                            row,
+                            "created_at",
+                            "date_create",
+                            "create_date",
+                            "datetime",
+                        )
+                    )
+                    work_type = _pick_str(
+                        row,
+                        "estimate_type_name",
+                        "type_name",
+                        "work_type",
+                        "type",
+                    )
+                    comment = _pick_str(row, "estimate_comment", "comment")
+                    row_id = _pick_str(row, "id", "estimate_id") or str(idx)
+                    grade_uid = f"{row_id}|{date_str}|{subj}|{val_str}|{work_type}"
+                    current_set.add(grade_uid)
+
+                    grade_entry = {
+                        "value": grade_num,
+                        "subject": subj,
+                        "date": date_str,
+                        "work_type": work_type,
+                        "comment": comment,
+                        "_uid": grade_uid,
+                    }
+
+                    if known_set is not None and grade_uid not in known_set:
+                        if not any(
+                            g.get("_uid") == grade_uid for g in detected_list
+                        ):
+                            detected_list.append(grade_entry)
+
+                    if mark_dt == today_spb or created_dt == today_spb:
+                        today_seen_keys.add(grade_uid)
+                        today_grades.append(grade_entry)
+
                     graded_rows.append((mark_dt, idx, row, val_str))
+
+        self._known_grade_uids[edu_id] = current_set
+
+        for det in detected_list:
+            uid = str(det.get("_uid") or "")
+            if uid and uid not in today_seen_keys:
+                today_seen_keys.add(uid)
+                today_grades.append(det)
+
+        clean_today_grades = [
+            {k: v for k, v in item.items() if k != "_uid"}
+            for item in today_grades
+        ]
+        if clean_today_grades:
+            lines: list[str] = []
+            for g in clean_today_grades:
+                details = [
+                    p for p in (g.get("work_type"), g.get("comment")) if p
+                ]
+                suffix = f" ({' — '.join(details)})" if details else ""
+                lines.append(f"• {g['subject']}: {g['value']}{suffix}")
+            today_text = "\n".join(lines)
+        else:
+            today_text = self.tr_common("no_grades_today_text")
 
         student.grades_count = len(numeric_grades)
         student.absences_count = absences
@@ -845,6 +939,15 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
                 "date": date_str,
                 "work_type": work_type,
                 "comment": comment,
+                "today_count": len(clean_today_grades),
+                "today_text": today_text,
+                "today_grades": clean_today_grades,
+            }
+        else:
+            student.last_grade_attributes = {
+                "today_count": 0,
+                "today_text": today_text,
+                "today_grades": [],
             }
 
     def _apply_lessons_homework(
@@ -1086,6 +1189,13 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
                     has_numeric = True
                     if acc_name:
                         by_type[acc_name] = val_float
+                        low_name = acc_name.lower()
+                        hot_kw = self.tr_list("meal_hot_keywords")
+                        buf_kw = self.tr_list("meal_buffet_keywords")
+                        if any(k in low_name for k in hot_kw):
+                            by_type["hot_balance"] = val_float
+                        elif any(k in low_name for k in buf_kw):
+                            by_type["buffet_balance"] = val_float
 
                 cust = _pick_str(acc, "customer_name", "id")
                 if cust and not customer_id:

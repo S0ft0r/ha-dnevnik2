@@ -115,7 +115,10 @@
     "log_token_refreshed": "X-JWT-Token session cookie automatically renewed by server",
     "no_homework_text": "No active homework",
     "no_lessons_text": "No lessons today",
+    "no_grades_today_text": "No grades today",
     "room_short": "rm.",
+    "meal_hot_keywords": "горяч|hot",
+    "meal_buffet_keywords": "буфет|buffet|cafeteria",
     "direction_in_prefixes": "вход|приход|in|input|enter|entry|1",
     "direction_out_prefixes": "вых|уход|out|output|exit|leave|2"
   }

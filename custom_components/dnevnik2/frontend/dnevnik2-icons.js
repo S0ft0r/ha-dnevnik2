@@ -88,6 +88,51 @@ function patchHassFormatEntityName(hass) {
   hass.formatEntityName = wrapped;
 }
 
+function isDnevnik2Entity(hass, entityId) {
+  if (!entityId) return false;
+  if (hass?.entities?.[entityId]?.platform === "dnevnik2") return true;
+  const icon = hass?.states?.[entityId]?.attributes?.icon;
+  return typeof icon === "string" && icon.startsWith("dnevnik2:");
+}
+
+function applyCheckListItemWrap(itemEl, enable) {
+  const sr = itemEl?.shadowRoot;
+  if (!sr) return;
+  const existing = sr.querySelector("#dnevnik2-check-wrap-style");
+  if (enable && !existing) {
+    const style = document.createElement("style");
+    style.id = "dnevnik2-check-wrap-style";
+    style.textContent =
+      ":host { height: auto !important; min-height: 48px !important; } " +
+      ".mdc-deprecated-list-item__text { white-space: normal !important; overflow: visible !important; text-overflow: unset !important; word-break: break-word !important; overflow-wrap: anywhere !important; display: block !important; width: 100% !important; }";
+    sr.appendChild(style);
+  } else if (!enable && existing) {
+    existing.remove();
+  }
+}
+
+function applyTodoCardWrap(cardEl) {
+  const sr = cardEl?.shadowRoot;
+  if (!sr) return;
+  const entityId = cardEl._entityId || cardEl._config?.entity;
+  const isTarget = isDnevnik2Entity(cardEl.hass, entityId);
+  const existing = sr.querySelector("#dnevnik2-todo-wrap-style");
+  if (isTarget && !existing) {
+    const style = document.createElement("style");
+    style.id = "dnevnik2-todo-wrap-style";
+    style.textContent =
+      "ha-check-list-item { height: auto !important; min-height: 48px !important; } " +
+      ".column { white-space: normal !important; overflow: visible !important; word-break: break-word !important; overflow-wrap: anywhere !important; padding-right: 8px !important; } " +
+      ".summary { white-space: pre-wrap !important; overflow: visible !important; text-overflow: unset !important; word-break: break-word !important; overflow-wrap: anywhere !important; line-height: 1.35 !important; display: block !important; }";
+    sr.appendChild(style);
+  } else if (!isTarget && existing) {
+    existing.remove();
+  }
+  sr.querySelectorAll("ha-check-list-item").forEach((item) => {
+    applyCheckListItemWrap(item, isTarget);
+  });
+}
+
 if (typeof customElements !== "undefined") {
   const haRoot = document.querySelector("home-assistant");
   if (haRoot?.hass) {
@@ -121,6 +166,32 @@ if (typeof customElements !== "undefined") {
     };
   });
 
+  customElements.whenDefined("hui-todo-list-card").then(() => {
+    const cls = customElements.get("hui-todo-list-card");
+    if (!cls || cls.prototype._dnevnik2TodoCardPatched) return;
+    cls.prototype._dnevnik2TodoCardPatched = true;
+    const origUpdated = cls.prototype.updated;
+    cls.prototype.updated = function (changedProps) {
+      if (origUpdated) origUpdated.call(this, changedProps);
+      applyTodoCardWrap(this);
+    };
+  });
+
+  customElements.whenDefined("ha-check-list-item").then(() => {
+    const cls = customElements.get("ha-check-list-item");
+    if (!cls || cls.prototype._dnevnik2CheckItemPatched) return;
+    cls.prototype._dnevnik2CheckItemPatched = true;
+    const origUpdated = cls.prototype.updated;
+    cls.prototype.updated = function (changedProps) {
+      if (origUpdated) origUpdated.call(this, changedProps);
+      const host = this.getRootNode?.()?.host;
+      if (host?.localName === "hui-todo-list-card") {
+        const entityId = host._entityId || host._config?.entity;
+        applyCheckListItemWrap(this, isDnevnik2Entity(host.hass, entityId));
+      }
+    };
+  });
+
   customElements.whenDefined("hui-generic-entity-row").then(() => {
     const cls = customElements.get("hui-generic-entity-row");
     if (!cls || cls.prototype._dnevnik2WrapPatched) return;
@@ -130,11 +201,7 @@ if (typeof customElements !== "undefined") {
       patchHassFormatEntityName(this.hass);
       if (origUpdated) origUpdated.call(this, changedProps);
       const entityId = this.config?.entity;
-      const isTarget = Boolean(
-        entityId &&
-          (this.hass?.entities?.[entityId]?.platform === "dnevnik2" ||
-            this.hass?.states?.[entityId]?.attributes?.icon?.startsWith?.("dnevnik2:"))
-      );
+      const isTarget = isDnevnik2Entity(this.hass, entityId);
       const existing = this.shadowRoot?.querySelector("#dnevnik2-wrap-style");
       if (isTarget && this.shadowRoot && !existing) {
         const style = document.createElement("style");

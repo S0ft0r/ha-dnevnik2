@@ -115,7 +115,10 @@
     "log_token_refreshed": "Токен сессии X-JWT-Token автоматически продлён сервером",
     "no_homework_text": "Нет активных домашних заданий",
     "no_lessons_text": "На сегодня уроков нет",
+    "no_grades_today_text": "Сегодня оценок нет",
     "room_short": "каб.",
+    "meal_hot_keywords": "горяч|hot",
+    "meal_buffet_keywords": "буфет|buffet|cafeteria",
     "direction_in_prefixes": "вход|приход|in|input|enter|entry|1",
     "direction_out_prefixes": "вых|уход|out|output|exit|leave|2"
   }

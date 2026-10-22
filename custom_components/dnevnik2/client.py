@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from collections.abc import Callable
 from datetime import date
+import json
 import re
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
@@ -85,6 +87,53 @@ def extract_jwt_token(raw_value: str | None) -> str | None:
     return None
 
 
+def jwt_exp_iat(token: str | None) -> tuple[int, int]:
+    """Декодирует поля (exp, iat) из payload JWT-токена без проверки подписи."""
+    if not token:
+        return (0, 0)
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:
+            return (0, 0)
+        payload_b64 = parts[1]
+        padding = "=" * (-len(payload_b64) % 4)
+        raw = base64.urlsafe_b64decode(payload_b64 + padding).decode("utf-8")
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            return (int(data.get("exp") or 0), int(data.get("iat") or 0))
+    except Exception:
+        pass
+    return (0, 0)
+
+
+def clear_petersburgedu_cookies(session: ClientSession | None) -> None:
+    """Полностью удаляет все cookie petersburgedu.ru из CookieJar сессии aiohttp."""
+    if session is None:
+        return
+    jar = getattr(session, "cookie_jar", None)
+    if jar is None:
+        return
+    if hasattr(jar, "clear_domain"):
+        for dom in (
+            "petersburgedu.ru",
+            ".petersburgedu.ru",
+            "dnevnik2.petersburgedu.ru",
+            ".dnevnik2.petersburgedu.ru",
+        ):
+            try:
+                jar.clear_domain(dom)
+            except Exception:
+                pass
+    if hasattr(jar, "clear"):
+        try:
+            jar.clear(
+                lambda m: "petersburgedu" in str(m.get("domain", "")).lower()
+                or getattr(m, "key", "") == SESSION_COOKIE
+            )
+        except Exception:
+            pass
+
+
 def format_date(dt: date) -> str:
     """Форматирует дату в DD.MM.YYYY для параметров API."""
     return dt.strftime("%d.%m.%Y")
@@ -162,39 +211,8 @@ class Dnevnik2Client:
         return headers
 
     def _clear_session_cookie_jar(self) -> None:
-        """Очищает общий CookieJar сессии aiohttp, чтобы не дублировать и не портить X-JWT-Token."""
-        jar = getattr(self._session, "cookie_jar", None)
-        if jar is not None and hasattr(jar, "clear_domain"):
-            try:
-                jar.clear_domain("dnevnik2.petersburgedu.ru")
-                jar.clear_domain(".petersburgedu.ru")
-            except Exception:
-                pass
-
-    def _extract_refreshed_cookie(self, response: ClientResponse) -> str | None:
-        """Извлекает обновлённый скользящий X-JWT-Token из заголовков Set-Cookie ответа."""
-        root_path_token: str | None = None
-        last_token: str | None = None
-        for header_val in response.headers.getall("Set-Cookie", []):
-            match = _SET_COOKIE_JWT_RE.search(header_val)
-            if not match:
-                continue
-            candidate = match.group(1).strip()
-            last_token = candidate
-            lower_hdr = header_val.lower()
-            if "path=/;" in lower_hdr or lower_hdr.endswith("path=/"):
-                root_path_token = candidate
-        if root_path_token:
-            return root_path_token
-        if last_token:
-            return last_token
-        try:
-            cookie = response.cookies.get(SESSION_COOKIE)
-            if cookie and cookie.value and cookie.value.startswith("eyJ"):
-                return cookie.value
-        except Exception:
-            pass
-        return None
+        """Очищает CookieJar сессии aiohttp (включая домен petersburgedu.ru без ведущей точки)."""
+        clear_petersburgedu_cookies(self._session)
 
     async def _request(
         self,
@@ -203,7 +221,7 @@ class Dnevnik2Client:
         *,
         include_auth: bool = True,
     ) -> dict[str, Any]:
-        """Выполняет GET-запрос к API дневника, обновляя скользящий X-JWT-Token без дублей в CookieJar."""
+        """Выполняет GET-запрос к API дневника с фиксированным X-JWT-Token и изоляцией CookieJar."""
         url = f"{BASE_URL}{path}"
         self._clear_session_cookie_jar()
         try:
@@ -215,12 +233,6 @@ class Dnevnik2Client:
                 allow_redirects=False,
                 ssl=False,
             ) as response:
-                if include_auth:
-                    refreshed = self._extract_refreshed_cookie(response)
-                    if refreshed and refreshed != self._token:
-                        self._token = refreshed
-                        if self._on_token_refreshed is not None:
-                            self._on_token_refreshed(refreshed)
                 self._clear_session_cookie_jar()
 
                 if response.status in (301, 302, 303, 307, 308, 401, 403):

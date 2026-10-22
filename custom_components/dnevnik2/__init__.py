@@ -63,11 +63,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
-    if not hass.data[DOMAIN].get("_frontend_registered"):
-        js_file = Path(__file__).parent / "frontend" / f"{DOMAIN}-icons.js"
-        if js_file.is_file() and getattr(hass, "http", None) is not None:
-            url_path = f"/{DOMAIN}_static/{DOMAIN}-icons.js"
-            try:
+    js_file = Path(__file__).parent / "frontend" / f"{DOMAIN}-icons.js"
+    if js_file.is_file() and getattr(hass, "http", None) is not None:
+        url_path = f"/{DOMAIN}_static/{DOMAIN}-icons.js"
+        try:
+            if not hass.data[DOMAIN].get("_frontend_registered"):
                 if hasattr(hass.http, "async_register_static_paths"):
                     await hass.http.async_register_static_paths(
                         [StaticPathConfig(url_path, str(js_file), cache_headers=False)]
@@ -76,11 +76,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     hass.http.register_static_path(
                         url_path, str(js_file), cache_headers=False
                     )
-                ver = int(js_file.stat().st_mtime)
-                add_extra_js_url(hass, f"{url_path}?v={ver}")
                 hass.data[DOMAIN]["_frontend_registered"] = True
-            except Exception as err:
-                _LOGGER.warning("Failed to register %s custom icons: %s", DOMAIN, err)
+            ver = int(js_file.stat().st_mtime)
+            if hass.data[DOMAIN].get("_frontend_mtime") != ver:
+                add_extra_js_url(hass, f"{url_path}?v={ver}")
+                hass.data[DOMAIN]["_frontend_mtime"] = ver
+        except Exception as err:
+            _LOGGER.warning("Failed to register %s custom icons: %s", DOMAIN, err)
 
     dev_reg = dr.async_get(hass)
     main_device = dev_reg.async_get_or_create(

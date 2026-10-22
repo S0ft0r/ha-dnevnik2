@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from aiohttp import ClientSession, DummyCookieJar
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
@@ -33,6 +34,9 @@ if not hasattr(_client_mod, "extract_jwt_token") or not hasattr(
 Dnevnik2AuthError = _client_mod.Dnevnik2AuthError
 Dnevnik2Client = _client_mod.Dnevnik2Client
 Dnevnik2ConnectionError = _client_mod.Dnevnik2ConnectionError
+clear_petersburgedu_cookies = getattr(
+    _client_mod, "clear_petersburgedu_cookies", None
+)
 extract_jwt_token = getattr(_client_mod, "extract_jwt_token", None)
 
 CONF_HOMEWORK_MODE = getattr(_const_mod, "CONF_HOMEWORK_MODE", "homework_mode")
@@ -118,9 +122,21 @@ def _is_mobile_or_companion_request() -> bool:
     return any(marker in ua for marker in mobile_markers)
 
 
+def _get_isolated_session(hass: HomeAssistant) -> ClientSession:
+    """Возвращает сессию aiohttp с DummyCookieJar и очищает общий CookieJar HA от старых cookie."""
+    shared = aiohttp_client.async_get_clientsession(hass, verify_ssl=False)
+    if callable(clear_petersburgedu_cookies):
+        clear_petersburgedu_cookies(shared)
+    return aiohttp_client.async_create_clientsession(
+        hass,
+        verify_ssl=False,
+        cookie_jar=DummyCookieJar(),
+    )
+
+
 async def _async_get_esia_url(hass: HomeAssistant) -> str:
     """Запрашивает актуальную ссылку авторизации через Госуслуги (ЕСИА)."""
-    session = aiohttp_client.async_get_clientsession(hass, verify_ssl=False)
+    session = _get_isolated_session(hass)
     client = Dnevnik2Client(session)
     if hasattr(client, "async_get_esia_login_url"):
         return await client.async_get_esia_login_url()
@@ -208,9 +224,7 @@ class Dnevnik2ConfigFlow(ConfigFlow, domain=DOMAIN):
             if not token:
                 errors["base"] = "invalid_token_format"
             else:
-                session = aiohttp_client.async_get_clientsession(
-                    self.hass, verify_ssl=False
-                )
+                session = _get_isolated_session(self.hass)
                 client = Dnevnik2Client(session, token=token)
                 try:
                     students = await _async_validate_students(client)
@@ -377,9 +391,7 @@ class Dnevnik2ConfigFlow(ConfigFlow, domain=DOMAIN):
             if not token:
                 errors["base"] = "invalid_token_format"
             else:
-                session = aiohttp_client.async_get_clientsession(
-                    self.hass, verify_ssl=False
-                )
+                session = _get_isolated_session(self.hass)
                 client = Dnevnik2Client(session, token=token)
                 try:
                     await _async_validate_students(client)
