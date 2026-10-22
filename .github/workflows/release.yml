@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Тег релиза (например, v0.1.16)"
+        description: "Тег релиза (например, v0.1.23)"
         required: true
-        default: "v0.1.16"
+        default: "v0.1.23"
       prerelease:
         description: "Отметить как Pre-release (альфа/бета)"
         type: boolean
@@ -56,19 +56,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
-          IS_PRERELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || contains(github.ref_name, '-') }}
+          IS_PRERELEASE: ${{ (github.event_name == 'workflow_dispatch' && (inputs.prerelease == true || github.event.inputs.prerelease == 'true')) || contains(github.ref_name, '-') }}
         run: |
-          PRERELEASE_FLAG=""
           if [ "$IS_PRERELEASE" = "true" ]; then
-            PRERELEASE_FLAG="--prerelease"
+            RELEASE_FLAGS="--prerelease"
+          else
+            RELEASE_FLAGS="--prerelease=false --latest"
           fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dnevnik2.zip --clobber
-            gh release edit "$TAG" --notes-file release_notes.md
+            gh release edit "$TAG" --notes-file release_notes.md $RELEASE_FLAGS
           else
             gh release create "$TAG" dnevnik2.zip \
               --target "${{ github.sha }}" \
               --title "Электронный дневник СПб $TAG" \
               --notes-file release_notes.md \
-              $PRERELEASE_FLAG
+              $RELEASE_FLAGS
           fi
