@@ -9,7 +9,7 @@
  */
 
 const CARD_TYPE = "dnevnik2-card";
-const CARD_VERSION = "0.1.32";
+const CARD_VERSION = "0.1.32.1";
 
 const SVG_ICONS = {
   gradeAvg:
@@ -2034,8 +2034,52 @@ class Dnevnik2Card extends HTMLElement {
   }
 }
 
-if (!customElements.get(CARD_TYPE)) {
-  customElements.define(CARD_TYPE, Dnevnik2Card);
+function _registerCardInCurrentRegistry() {
+  const registry =
+    typeof window !== "undefined" && window.customElements
+      ? window.customElements
+      : typeof customElements !== "undefined"
+        ? customElements
+        : null;
+  if (!registry) return false;
+
+  // В Home Assistant 2026.9+ shim подменяет window.customElements после
+  // загрузки extra_module_url. Ждём регистрацию корневого элемента HA,
+  // чтобы определить карточку именно в активном реестре.
+  if (typeof document !== "undefined" && !registry.get("home-assistant")) {
+    return false;
+  }
+  if (registry.get(CARD_TYPE)) return true;
+
+  try {
+    registry.define(CARD_TYPE, Dnevnik2Card);
+  } catch (err) {
+    // Класс мог уже попасть в нативный реестр до замены его HA-shim'ом.
+    // Новый подкласс можно безопасно зарегистрировать в текущем реестре.
+    if (registry.get(CARD_TYPE)) return true;
+    try {
+      const ScopedDnevnik2Card = class extends Dnevnik2Card {};
+      registry.define(CARD_TYPE, ScopedDnevnik2Card);
+    } catch (fallbackErr) {
+      console.error(
+        "Не удалось зарегистрировать custom:dnevnik2-card",
+        err,
+        fallbackErr
+      );
+      return false;
+    }
+  }
+  return true;
+}
+
+if (!_registerCardInCurrentRegistry() && typeof window !== "undefined") {
+  let attempts = 0;
+  const registryTimer = window.setInterval(() => {
+    attempts += 1;
+    if (_registerCardInCurrentRegistry() || attempts >= 600) {
+      window.clearInterval(registryTimer);
+    }
+  }, 50);
 }
 
 window.customCards = window.customCards || [];
