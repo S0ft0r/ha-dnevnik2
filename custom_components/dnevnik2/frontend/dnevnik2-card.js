@@ -9,7 +9,7 @@
  */
 
 const CARD_TYPE = "dnevnik2-card";
-const CARD_VERSION = "0.1.31";
+const CARD_VERSION = "0.1.32";
 
 const SVG_ICONS = {
   gradeAvg:
@@ -1079,15 +1079,18 @@ class Dnevnik2Card extends HTMLElement {
     if (deviceId && hass.entities) {
       for (const [entId, meta] of Object.entries(hass.entities)) {
         if (meta.device_id !== deviceId) continue;
-        if (entId.endsWith("_average_grade")) ids.average_grade = entId;
-        else if (entId.endsWith("_last_grade")) ids.last_grade = entId;
-        else if (entId.endsWith("_at_school")) ids.at_school = entId;
-        else if (entId.endsWith("_turnstile_last")) ids.turnstile_last = entId;
-        else if (entId.endsWith("_meal_hot_balance")) ids.meal_hot = entId;
-        else if (entId.endsWith("_meal_buffet_balance")) ids.meal_buffet = entId;
-        else if (entId.endsWith("_homework")) {
+        const uniqueId = String(meta.unique_id || "");
+        const hasKeySuffix = (suffix) =>
+          entId.endsWith(suffix) || uniqueId.endsWith(suffix);
+        if (hasKeySuffix("_average_grade")) ids.average_grade = entId;
+        else if (hasKeySuffix("_last_grade")) ids.last_grade = entId;
+        else if (hasKeySuffix("_at_school")) ids.at_school = entId;
+        else if (hasKeySuffix("_turnstile_last")) ids.turnstile_last = entId;
+        else if (hasKeySuffix("_meal_hot_balance")) ids.meal_hot = entId;
+        else if (hasKeySuffix("_meal_buffet_balance")) ids.meal_buffet = entId;
+        else if (hasKeySuffix("_homework")) {
           if (!ids.homework || entId.startsWith("todo.")) ids.homework = entId;
-        } else if (entId.endsWith("_lessons_today")) {
+        } else if (hasKeySuffix("_lessons_today")) {
           if (!ids.lessons || entId.startsWith("sensor.")) ids.lessons = entId;
         }
       }
