@@ -9,7 +9,7 @@
  */
 
 const CARD_TYPE = "dnevnik2-card";
-const CARD_VERSION = "0.1.30";
+const CARD_VERSION = "0.1.31";
 
 const SVG_ICONS = {
   gradeAvg:
@@ -55,26 +55,189 @@ function computeSubjectHint(avg) {
   return "";
 }
 
-function shortenPeriodHeader(name, index, totalSubPeriods) {
-  const raw = String(name || "").trim();
-  const low = raw.toLowerCase();
-  const romans = ["I", "II", "III", "IV", "V", "VI"];
-  if (low.includes("полугод")) {
-    const numMatch = low.match(/([12])/);
-    const r = numMatch ? romans[Number(numMatch[1]) - 1] : romans[index] || raw;
-    return `${r} п/г`;
+const PERIOD_ROMANS = ["I", "II", "III", "IV"];
+const PERIOD_ROMAN_VALUES = { i: 1, ii: 2, iii: 3, iv: 4, v: 5, vi: 6 };
+
+function periodDateMs(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const ruDate = raw.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  if (ruDate) {
+    return Date.UTC(Number(ruDate[3]), Number(ruDate[2]) - 1, Number(ruDate[1]));
+  }
+  const isoDate = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoDate) {
+    return Date.UTC(Number(isoDate[1]), Number(isoDate[2]) - 1, Number(isoDate[3]));
+  }
+  const parsed = Date.parse(raw);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function periodDurationDays(period) {
+  const start = periodDateMs(period?.date_from);
+  const end = periodDateMs(period?.date_to);
+  return start === null || end === null ? null : Math.floor((end - start) / 86400000);
+}
+
+function getAcademicPeriodKind(period) {
+  const raw = typeof period === "string" ? period : period?.name;
+  const low = String(raw || "").trim().toLowerCase();
+  if (!low) return "";
+
+  if (
+    low.includes("год") ||
+    low.includes("year") ||
+    low.includes("итог") ||
+    periodDurationDays(typeof period === "string" ? null : period) >= 200
+  ) {
+    return "year";
+  }
+  if (
+    low.includes("полугод") ||
+    low.includes("семестр") ||
+    low.includes("semester") ||
+    /п\s*\/\s*г/.test(low)
+  ) {
+    return "semester";
+  }
+  if (low.includes("триместр") || low.includes("trimester")) {
+    return "trimester";
   }
   if (
     low.includes("четверт") ||
-    low.includes("триместр") ||
-    low.includes("модул")
+    low.includes("четв") ||
+    low.includes("quarter") ||
+    /(?:^|[^a-z0-9])(?:[1-4]|iv|iii|ii|i)\s*ч(?:\.|$|[^a-z])/i.test(low)
   ) {
-    const numMatch = low.match(/([1-6])/);
-    if (numMatch) return romans[Number(numMatch[1]) - 1] || numMatch[1];
-    return romans[index] || raw.slice(0, 4);
+    return "quarter";
   }
-  if (totalSubPeriods >= 3 && index < romans.length) {
-    return romans[index];
+  if (low.includes("модул") || low.includes("module")) return "module";
+  return "";
+}
+
+function getPeriodOrdinal(name) {
+  const raw = String(name || "");
+  const tokens = raw.matchAll(/(^|[^a-z0-9])(vi|iv|v|iii|ii|i|[1-6])(?=$|[^a-z0-9])/gi);
+  for (const match of tokens) {
+    const token = match[2].toLowerCase();
+    const value = /^\d$/.test(token) ? Number(token) : PERIOD_ROMAN_VALUES[token];
+    if (Number.isInteger(value)) return value;
+  }
+  return null;
+}
+
+function isGenericPeriodName(name) {
+  return /^(?:(?:учебный\s*)?период|period)?\s*(?:№|#)?\s*(?:[1-6]|vi|iv|v|iii|ii|i)\s*[.)]?$/i.test(
+    String(name || "").trim()
+  );
+}
+
+function periodKindForDisplay(period, selectedKind) {
+  const kind = getAcademicPeriodKind(period);
+  if (kind) return kind;
+  return selectedKind && isGenericPeriodName(period?.name) ? selectedKind : "";
+}
+
+function periodsOverlap(first, second) {
+  const firstStart = periodDateMs(first?.date_from);
+  const firstEnd = periodDateMs(first?.date_to);
+  const secondStart = periodDateMs(second?.date_from);
+  const secondEnd = periodDateMs(second?.date_to);
+  if ([firstStart, firstEnd, secondStart, secondEnd].some((value) => value === null)) {
+    return false;
+  }
+  return firstStart <= secondEnd && firstEnd >= secondStart;
+}
+
+function isPeriodInAcademicYear(period, yearPeriod) {
+  if (!yearPeriod) return true;
+  const start = periodDateMs(period?.date_from);
+  const end = periodDateMs(period?.date_to);
+  const yearStart = periodDateMs(yearPeriod?.date_from);
+  const yearEnd = periodDateMs(yearPeriod?.date_to);
+  if ([start, end, yearStart, yearEnd].some((value) => value === null)) {
+    return true;
+  }
+  return end >= yearStart && start <= yearEnd;
+}
+
+function periodEntryScore(period) {
+  const name = String(period?.name || "").trim().toLowerCase();
+  return (
+    (period?.is_current ? 1000 : 0) +
+    (/(четверт|полугод|семестр|триместр|модул)/.test(name) ? 20 : 0) +
+    Math.min(name.length, 40) / 100
+  );
+}
+
+function collapsePeriodColumns(periods, kind) {
+  const limits = { quarter: 4, trimester: 3, semester: 2, unknown: 4 };
+  const limit = limits[kind] ?? Infinity;
+  const result = [];
+  const byOrdinal = new Map();
+  const byNameAndDates = new Map();
+
+  for (const period of periods) {
+    const name = String(period?.name || "").trim();
+    if (!name) continue;
+    const ordinal = getPeriodOrdinal(name);
+    if (Number.isFinite(limit) && ordinal !== null && ordinal > limit) continue;
+
+    const dateKey = `${String(period?.date_from || "").trim()}|${String(period?.date_to || "").trim()}|${name.toLowerCase()}`;
+    const existingIndex = ordinal !== null ? byOrdinal.get(ordinal) : byNameAndDates.get(dateKey);
+    if (existingIndex !== undefined) {
+      const existing = result[existingIndex];
+      const aliases = Array.from(new Set([...(existing.aliases || []), name]));
+      const preferred = periodEntryScore(period) > periodEntryScore(existing) ? period : existing;
+      result[existingIndex] = {
+        ...preferred,
+        aliases,
+        _periodOrdinal: ordinal,
+        _periodOrder: existing._periodOrder,
+      };
+      if (ordinal !== null) byOrdinal.set(ordinal, existingIndex);
+      continue;
+    }
+
+    const entry = {
+      ...period,
+      aliases: [name],
+      _periodOrdinal: ordinal,
+      _periodOrder: result.length,
+    };
+    if (ordinal !== null) byOrdinal.set(ordinal, result.length);
+    else byNameAndDates.set(dateKey, result.length);
+    result.push(entry);
+  }
+
+  result.sort((a, b) => {
+    if (a._periodOrdinal !== null && b._periodOrdinal !== null) {
+      return a._periodOrdinal - b._periodOrdinal;
+    }
+    const aDate = periodDateMs(a.date_from);
+    const bDate = periodDateMs(b.date_from);
+    if (aDate !== null && bDate !== null && aDate !== bDate) return aDate - bDate;
+    return a._periodOrder - b._periodOrder;
+  });
+  return Number.isFinite(limit) ? result.slice(0, limit) : result;
+}
+
+function shortenPeriodHeader(name, index, kind) {
+  const raw = String(name || "").trim();
+  const ordinal = getPeriodOrdinal(raw) ?? index + 1;
+  const roman = PERIOD_ROMANS[ordinal - 1];
+
+  if (kind === "semester") {
+    return ordinal <= 2 && roman ? `${roman} п/г` : raw.slice(0, 6);
+  }
+  if (kind === "quarter") {
+    return ordinal <= 4 && roman ? roman : raw.slice(0, 6);
+  }
+  if (kind === "trimester") {
+    return ordinal <= 3 && roman ? roman : raw.slice(0, 6);
+  }
+  if (kind === "module") {
+    return `М${getPeriodOrdinal(raw) ?? index + 1}`;
   }
   return raw.length > 6 ? raw.slice(0, 6) : raw;
 }
@@ -1013,18 +1176,62 @@ class Dnevnik2Card extends HTMLElement {
     const rawPeriods = Array.isArray(attrs.periods) ? attrs.periods : [];
     const showHints = this._config.show_hints !== false;
 
-    const subPeriods = [];
-    let yearPeriod = null;
-    for (const p of rawPeriods) {
-      const pName = String(p?.name || "").trim();
-      if (!pName) continue;
-      const low = pName.toLowerCase();
-      if (low.includes("год") || low.includes("year") || low.includes("итог")) {
-        yearPeriod = p;
-      } else {
-        subPeriods.push(p);
-      }
+    const periodRows = rawPeriods
+      .filter((period) => String(period?.name || "").trim())
+      .map((period, index) => ({ ...period, _sourceIndex: index }));
+    const activePeriod =
+      periodRows.find((period) => period.is_current) ||
+      periodRows.find(
+        (period) =>
+          String(period.name || "").trim() ===
+          String(attrs.period_name || "").trim()
+      ) ||
+      null;
+    const yearCandidates = periodRows.filter(
+      (period) => getAcademicPeriodKind(period) === "year"
+    );
+    const yearPeriod =
+      yearCandidates.find(
+        (period) => activePeriod && periodsOverlap(period, activePeriod)
+      ) ||
+      yearCandidates.find((period) => period.is_current) ||
+      yearCandidates[0] ||
+      null;
+
+    let displayPeriodKind =
+      getAcademicPeriodKind(activePeriod) ||
+      getAcademicPeriodKind(attrs.period_name);
+    if (displayPeriodKind === "year") displayPeriodKind = "";
+    if (!displayPeriodKind) {
+      const kindPriority = ["quarter", "trimester", "semester", "module"];
+      const kindCounts = Object.fromEntries(
+        kindPriority.map((kind) => [
+          kind,
+          periodRows.filter((period) => getAcademicPeriodKind(period) === kind)
+            .length,
+        ])
+      );
+      displayPeriodKind =
+        kindPriority.find((kind) => kindCounts[kind] > 0) || "";
     }
+
+    const periodsInYear = periodRows.filter(
+      (period) =>
+        getAcademicPeriodKind(period) !== "year" &&
+        isPeriodInAcademicYear(period, yearPeriod)
+    );
+    const subPeriods = collapsePeriodColumns(
+      displayPeriodKind
+        ? periodsInYear.filter(
+            (period) =>
+              periodKindForDisplay(period, displayPeriodKind) ===
+              displayPeriodKind
+          )
+        : periodsInYear.filter(
+            (period) => !getAcademicPeriodKind(period)
+          ),
+      displayPeriodKind || "unknown"
+    );
 
     const allSubjects = Array.from(
       new Set([
@@ -1040,7 +1247,11 @@ class Dnevnik2Card extends HTMLElement {
 
     const periodHeadersHtml = subPeriods
       .map((p, idx) => {
-        const shortLbl = shortenPeriodHeader(p.name, idx, subPeriods.length);
+        const shortLbl = shortenPeriodHeader(
+          p.name,
+          idx,
+          displayPeriodKind || "unknown"
+        );
         const isCur = Boolean(p.is_current);
         return `<th class="${isCur ? "active-period" : ""}" title="${escapeHtml(
           `${p.name} (${p.date_from || ""} – ${p.date_to || ""})`
@@ -1072,7 +1283,13 @@ class Dnevnik2Card extends HTMLElement {
         const subjPeriodsMap = periodGrades[subj] || {};
         const subCellsHtml = subPeriods
           .map((p) => {
-            let val = subjPeriodsMap[p.name];
+            let val;
+            for (const periodKey of p.aliases || [p.name]) {
+              if (Object.prototype.hasOwnProperty.call(subjPeriodsMap, periodKey)) {
+                val = subjPeriodsMap[periodKey];
+                break;
+              }
+            }
             if (val === undefined && p.is_current && subPeriods.length === 0) {
               val = finalGrades[subj];
             }
