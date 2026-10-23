@@ -7,12 +7,12 @@
   </picture>
 </p>
 
-[![Version](https://img.shields.io/badge/version-0.1.26-blue.svg)](https://github.com/S0ft0r/ha-dnevnik2)
+[![Version](https://img.shields.io/badge/version-0.1.27-blue.svg)](https://github.com/S0ft0r/ha-dnevnik2)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2026.8%2B-41BDF5.svg)](https://www.home-assistant.io/)
 
 **История изменений:** [CHANGELOG.md](CHANGELOG.md)
 
-**Версия:** 0.1.26  
+**Версия:** 0.1.27  
 **Домен интеграции:** `dnevnik2`
 
 Кастомная интеграция для подключения портала **«Петербургское образование. Электронный дневник»** (`https://dnevnik2.petersburgedu.ru`) к **Home Assistant**.
@@ -58,11 +58,26 @@
 
 ## Установка и настройка
 
+### Способ 1. Через HACS (рекомендуется)
+
+[![Открыть репозиторий в HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=S0ft0r&repository=ha-dnevnik2&category=integration)
+
+1. Нажмите кнопку выше (или в **HACS** откройте меню `⋮` в правом верхнем углу → **Пользовательские репозитории**, укажите `https://github.com/S0ft0r/ha-dnevnik2` и категорию **Интеграция**).
+2. Нажмите **Скачать** напротив интеграции **Электронный дневник СПб**.
+3. Перезапустите Home Assistant.
+
+### Способ 2. Ручная установка
+
 1. Скопируйте папку `custom_components/dnevnik2` в директорию `config/custom_components/` вашего Home Assistant.
 2. Перезапустите Home Assistant.
-3. Перейдите в **Настройки → Устройства и службы → Добавить интеграцию** и выберите **Электронный дневник СПб**.
-4. **Шаг 1 из 2:** откройте предложенную ссылку входа через Госуслуги (ЕСИА) в браузере на компьютере, после входа нажмите `F12` (или `Ctrl+Shift+I`) → вкладка `Application` (`Приложение`) → `Cookies` → `https://dnevnik2.petersburgedu.ru`, скопируйте значение `X-JWT-Token` (`eyJ...`) и вставьте в поле.
-5. **Шаг 2 из 2:** проверьте список найденных учащихся и выберите формат вывода домашних заданий и расписания уроков (`Список дел (To-do)` или `Сенсор с текстовым атрибутом`).
+
+### Настройка интеграции
+
+[![Добавить интеграцию в Home Assistant](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=dnevnik2)
+
+1. Нажмите кнопку выше или перейдите в **Настройки → Устройства и службы → Добавить интеграцию** и выберите **Электронный дневник СПб**.
+2. **Шаг 1 из 2:** откройте предложенную ссылку входа через Госуслуги (ЕСИА) в браузере на компьютере, после входа нажмите `F12` (или `Ctrl+Shift+I`) → вкладка `Application` (`Приложение`) → `Cookies` → `https://dnevnik2.petersburgedu.ru`, скопируйте значение `X-JWT-Token` (`eyJ...`) и вставьте в поле.
+3. **Шаг 2 из 2:** проверьте список найденных учащихся и выберите формат вывода домашних заданий и расписания уроков (`Список дел (To-do)` или `Сенсор с текстовым атрибутом`).
 
 ---
 

@@ -476,8 +476,8 @@ class Dnevnik2Client:
 
     def _inspect_and_rotate_cookies(
         self, path: str, set_cookie_headers: list[str]
-    ) -> None:
-        """Извлекает ПОСЛЕДНИЙ валидный Set-Cookie: X-JWT-Token (при дублировании Path=/ и Path=/api побеждает последний)."""
+    ) -> bool:
+        """Извлекает ПОСЛЕДНИЙ валидный Set-Cookie: X-JWT-Token и возвращает True, если токен обновился."""
         cur_payload = decode_jwt_payload(self._token)
         cur_user_id = jwt_user_identity(cur_payload)
         cur_ts, _ = jwt_exp_iat(self._token)
@@ -561,11 +561,12 @@ class Dnevnik2Client:
 
         if not valid_candidates:
             self._notify_diag()
-            return
+            return False
 
         chosen = valid_candidates[-1]
-        self._commit_new_token(chosen)
+        rotated = self._commit_new_token(chosen)
         self._notify_diag()
+        return rotated
 
     async def async_refresh_via_esia_esk(self) -> bool:
         """Бесшовное обновление 8-минутного X-JWT-Token через SSO-ключ ЕСИА (esk -> sso-key)."""
@@ -760,6 +761,7 @@ class Dnevnik2Client:
         params: dict[str, Any] | list[tuple[str, str]] | None = None,
         *,
         include_auth: bool = True,
+        _retried_cookie: bool = False,
         _retried_fallback: bool = False,
         _retried_esia: bool = False,
     ) -> dict[str, Any]:
@@ -789,9 +791,19 @@ class Dnevnik2Client:
                         "timestamp": int(time.time()),
                     }
                     self._notify_diag()
+                    rotated_on_err = False
                     if set_cookie_headers:
-                        self._inspect_and_rotate_cookies(
+                        rotated_on_err = self._inspect_and_rotate_cookies(
                             path, set_cookie_headers
+                        )
+                    if include_auth and rotated_on_err and not _retried_cookie:
+                        return await self._request(
+                            path,
+                            params=params,
+                            include_auth=include_auth,
+                            _retried_cookie=True,
+                            _retried_fallback=_retried_fallback,
+                            _retried_esia=_retried_esia,
                         )
                     if (
                         include_auth
@@ -802,14 +814,19 @@ class Dnevnik2Client:
                             path,
                             params=params,
                             include_auth=include_auth,
+                            _retried_cookie=_retried_cookie,
                             _retried_fallback=_retried_fallback,
                             _retried_esia=True,
                         )
+                    fb_ts, _ = jwt_exp_iat(self._fallback_token)
+                    cur_ts, _ = jwt_exp_iat(self._token)
                     if (
                         include_auth
+                        and not rotated_on_err
                         and not _retried_fallback
                         and self._fallback_token
                         and self._fallback_token != self._token
+                        and (cur_ts == 0 or fb_ts >= cur_ts)
                     ):
                         self._token = self._fallback_token
                         if self._on_token_refreshed is not None:
@@ -820,6 +837,7 @@ class Dnevnik2Client:
                             path,
                             params=params,
                             include_auth=include_auth,
+                            _retried_cookie=_retried_cookie,
                             _retried_fallback=True,
                             _retried_esia=_retried_esia,
                         )
@@ -969,15 +987,12 @@ class Dnevnik2Client:
         return await self._request(EP_CURRENT_USER)
 
     async def async_keep_alive(self) -> bool:
-        """Фоновый пинг сессии (раз в 4 мин.) и SSO-продление 8-минутного X-JWT-Token через esk."""
-        prev_tok = self._token
+        """Фоновый пинг сессии (раз в 4 мин.) для скользящего обновления X-JWT-Token."""
         try:
             await self._request(EP_RELATED_CHILDREN, params={"p_page": "1"})
-            if self._token == prev_tok:
-                await self.async_refresh_via_esia_esk()
             return True
         except Dnevnik2Error:
-            return await self.async_refresh_via_esia_esk()
+            return False
 
     async def async_get_children(self) -> list[dict[str, Any]]:
         """Список связанных детей и их обучений (/api/journal/person/related-child-list)."""

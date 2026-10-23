@@ -234,6 +234,7 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
         self._known_grade_uids: dict[str, set[str]] = {}
         self._detected_today_grades: dict[tuple[str, date], list[dict[str, Any]]] = {}
         self._low_balance_alerted: dict[tuple[str, str], float] = {}
+        self._consecutive_auth_failures: int = 0
 
         scan_minutes = int(
             entry.options.get(
@@ -256,6 +257,7 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
         super().__init__(
             hass,
             _LOGGER,
+            config_entry=entry,
             name=f"{DOMAIN}_{entry.entry_id}",
             update_interval=timedelta(minutes=scan_minutes),
         )
@@ -346,10 +348,12 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
     async def async_keep_alive_tick(self, _now: datetime | None = None) -> None:
         """Периодический фоновый пинг портала (раз в 4 мин.) для поддержания скользящей сессии."""
         ok = await self.client.async_keep_alive()
-        if ok and not self.last_update_success:
-            await self.async_request_refresh()
-        else:
-            self.async_update_listeners()
+        if ok:
+            self._consecutive_auth_failures = 0
+            if not self.last_update_success:
+                await self.async_request_refresh()
+                return
+        self.async_update_listeners()
 
     async def async_init_translations(self) -> None:
         """Асинхронно загружает локализацию и сохранённые отметки выполненных элементов Todo."""
@@ -546,12 +550,16 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
             try:
                 children_raw = await self.client.async_get_children()
             except Dnevnik2AuthError as err:
-                raise ConfigEntryAuthFailed(
-                    self.tr_common("error_auth_expired")
-                ) from err
+                self._consecutive_auth_failures += 1
+                if self._consecutive_auth_failures >= 3:
+                    raise ConfigEntryAuthFailed(
+                        self.tr_common("error_auth_expired")
+                    ) from err
+                raise UpdateFailed(str(err)) from err
             except Dnevnik2ConnectionError as err:
                 raise UpdateFailed(str(err)) from err
 
+        self._consecutive_auth_failures = 0
         students = self._parse_students(children_raw, [])
         if any(not st.institution_name for st in students.values()):
             try:
