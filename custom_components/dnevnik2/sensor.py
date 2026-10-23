@@ -168,7 +168,7 @@ class Dnevnik2ConnectionStatusSensor(
             "last_error": client.last_error_message,
             "last_error_at": _fmt_unix_ts(client.last_error_at),
             "http_status": client.last_http_status,
-            "token_issued_at": claims.get("iat_iso"),
+            "token_issued_at": _fmt_unix_ts(claims.get("iat")),
             "token_ttl_sec": claims.get("ttl_seconds"),
             "has_sso_key": client.has_esk,
             "sso_refreshes": client.sso_refreshes_count,

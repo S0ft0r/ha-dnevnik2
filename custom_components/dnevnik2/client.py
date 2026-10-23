@@ -287,6 +287,7 @@ class Dnevnik2Client:
         self._last_set_cookies_diag: list[dict[str, Any]] = []
         self._last_esia_refresh_diag: list[dict[str, Any]] = []
         self._last_auth_failure_diag: dict[str, Any] = {}
+        self._auth_error_streak: int = 0
         self._connection_state: str = CONN_STATE_OK
         self._last_success_at: int | None = None
         self._last_error_at: int | None = None
@@ -767,6 +768,7 @@ class Dnevnik2Client:
     ) -> dict[str, Any]:
         """Выполняет GET-запрос к API дневника со скользящим и SSO-обновлением X-JWT-Token."""
         url = f"{BASE_URL}{path}"
+        is_session_ep = path in (EP_RELATED_CHILDREN, EP_CURRENT_USER)
         self._clear_session_cookie_jar()
         try:
             async with self._session.get(
@@ -783,16 +785,8 @@ class Dnevnik2Client:
                 self._clear_session_cookie_jar()
 
                 if response.status in (301, 302, 303, 307, 308, 401, 403):
-                    self._last_auth_failure_diag = {
-                        "endpoint": path,
-                        "status": response.status,
-                        "location": response.headers.get("Location", ""),
-                        "set_cookie_count": len(set_cookie_headers),
-                        "timestamp": int(time.time()),
-                    }
-                    self._notify_diag()
                     rotated_on_err = False
-                    if set_cookie_headers:
+                    if set_cookie_headers and path in _ROTATION_SAFE_PATHS:
                         rotated_on_err = self._inspect_and_rotate_cookies(
                             path, set_cookie_headers
                         )
@@ -805,6 +799,18 @@ class Dnevnik2Client:
                             _retried_fallback=_retried_fallback,
                             _retried_esia=_retried_esia,
                         )
+                    if not is_session_ep:
+                        raise Dnevnik2ConnectionError(
+                            f"HTTP {response.status} on {path}"
+                        )
+                    self._last_auth_failure_diag = {
+                        "endpoint": path,
+                        "status": response.status,
+                        "location": response.headers.get("Location", ""),
+                        "set_cookie_count": len(set_cookie_headers),
+                        "timestamp": int(time.time()),
+                    }
+                    self._notify_diag()
                     if (
                         include_auth
                         and not _retried_esia
@@ -852,7 +858,9 @@ class Dnevnik2Client:
                         raise Dnevnik2ConnectionError(
                             f"ESA HTTP {self._last_esia_5xx}"
                         )
-                    self._connection_state = CONN_STATE_AUTH_EXPIRED
+                    self._auth_error_streak += 1
+                    if self._auth_error_streak >= 2:
+                        self._connection_state = CONN_STATE_AUTH_EXPIRED
                     self._last_error_at = int(time.time())
                     self._last_http_status = response.status
                     self._last_error_message = f"HTTP {response.status}"
@@ -860,17 +868,18 @@ class Dnevnik2Client:
                     raise Dnevnik2AuthError(f"HTTP {response.status}")
 
                 if response.status >= 500:
-                    self._connection_state = CONN_STATE_PORTAL_ERROR
-                    self._last_error_at = int(time.time())
-                    self._last_http_status = response.status
-                    self._last_error_message = f"HTTP {response.status}"
-                    self._notify_diag()
+                    if is_session_ep:
+                        self._connection_state = CONN_STATE_PORTAL_ERROR
+                        self._last_error_at = int(time.time())
+                        self._last_http_status = response.status
+                        self._last_error_message = f"HTTP {response.status}"
+                        self._notify_diag()
                     raise Dnevnik2ConnectionError(f"HTTP {response.status}")
 
                 try:
                     payload = await response.json(content_type=None)
                 except Exception as err:
-                    if response.status == 200:
+                    if response.status == 200 and is_session_ep:
                         if (
                             include_auth
                             and not _retried_esia
@@ -880,14 +889,18 @@ class Dnevnik2Client:
                                 path,
                                 params=params,
                                 include_auth=include_auth,
+                                _retried_cookie=_retried_cookie,
                                 _retried_fallback=_retried_fallback,
                                 _retried_esia=True,
                             )
+                        fb_ts, _ = jwt_exp_iat(self._fallback_token)
+                        cur_ts, _ = jwt_exp_iat(self._token)
                         if (
                             include_auth
                             and not _retried_fallback
                             and self._fallback_token
                             and self._fallback_token != self._token
+                            and (cur_ts == 0 or fb_ts >= cur_ts)
                         ):
                             self._token = self._fallback_token
                             if self._on_token_refreshed is not None:
@@ -898,10 +911,13 @@ class Dnevnik2Client:
                                 path,
                                 params=params,
                                 include_auth=include_auth,
+                                _retried_cookie=_retried_cookie,
                                 _retried_fallback=True,
                                 _retried_esia=_retried_esia,
                             )
-                        self._connection_state = CONN_STATE_AUTH_EXPIRED
+                        self._auth_error_streak += 1
+                        if self._auth_error_streak >= 2:
+                            self._connection_state = CONN_STATE_AUTH_EXPIRED
                         self._last_error_at = int(time.time())
                         self._last_http_status = response.status
                         self._last_error_message = "Non-JSON 200 response"
@@ -909,27 +925,18 @@ class Dnevnik2Client:
                         raise Dnevnik2AuthError(
                             "Non-JSON 200 response"
                         ) from err
-                    self._connection_state = CONN_STATE_PORTAL_ERROR
-                    self._last_error_at = int(time.time())
-                    self._last_http_status = response.status
-                    self._last_error_message = "Invalid response body"
-                    self._notify_diag()
                     raise Dnevnik2ConnectionError("Invalid response body") from err
 
                 if response.status >= 400:
-                    self._connection_state = CONN_STATE_PORTAL_ERROR
-                    self._last_error_at = int(time.time())
-                    self._last_http_status = response.status
-                    self._last_error_message = f"HTTP {response.status}"
-                    self._notify_diag()
+                    if is_session_ep:
+                        self._connection_state = CONN_STATE_PORTAL_ERROR
+                        self._last_error_at = int(time.time())
+                        self._last_http_status = response.status
+                        self._last_error_message = f"HTTP {response.status}"
+                        self._notify_diag()
                     raise Dnevnik2ConnectionError(f"HTTP {response.status}")
 
                 if not isinstance(payload, dict):
-                    self._connection_state = CONN_STATE_PORTAL_ERROR
-                    self._last_error_at = int(time.time())
-                    self._last_http_status = response.status
-                    self._last_error_message = "Unexpected JSON payload root"
-                    self._notify_diag()
                     raise Dnevnik2ConnectionError("Unexpected JSON payload root")
 
                 data = payload.get("data")
@@ -941,10 +948,12 @@ class Dnevnik2Client:
                 ):
                     self._inspect_and_rotate_cookies(path, set_cookie_headers)
 
-                self._connection_state = CONN_STATE_OK
-                self._last_success_at = int(time.time())
-                self._last_http_status = response.status
-                self._last_error_message = None
+                if is_session_ep:
+                    self._auth_error_streak = 0
+                    self._connection_state = CONN_STATE_OK
+                    self._last_success_at = int(time.time())
+                    self._last_http_status = response.status
+                    self._last_error_message = None
 
                 if isinstance(data, dict):
                     return data
@@ -954,10 +963,11 @@ class Dnevnik2Client:
         except Dnevnik2Error:
             raise
         except (ClientError, asyncio.TimeoutError, TimeoutError) as err:
-            self._connection_state = CONN_STATE_TIMEOUT
-            self._last_error_at = int(time.time())
-            self._last_error_message = str(err) or "Timeout"
-            self._notify_diag()
+            if is_session_ep:
+                self._connection_state = CONN_STATE_TIMEOUT
+                self._last_error_at = int(time.time())
+                self._last_error_message = str(err) or "Timeout"
+                self._notify_diag()
             raise Dnevnik2ConnectionError(str(err)) from err
 
     @staticmethod

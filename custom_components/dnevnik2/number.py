@@ -53,6 +53,11 @@ class Dnevnik2BalanceLimitNumber(
         self._attr_device_info = coordinator.device_info
 
     @property
+    def available(self) -> bool:
+        """Настройка лимита баланса хранится локально и всегда доступна."""
+        return True
+
+    @property
     def native_value(self) -> float:
         """Текущий порог низкого баланса питания в рублях."""
         return float(self.coordinator.balance_limit)
