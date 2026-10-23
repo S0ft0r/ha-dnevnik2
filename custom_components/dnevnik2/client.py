@@ -25,6 +25,7 @@ from .const import (
     EP_CURRENT_USER,
     EP_ESIA_LOGIN_URL,
     EP_ESTIMATE_TABLE,
+    EP_FILEKIT_DOWNLOAD,
     EP_GROUP_PERIODS,
     EP_LESSONS_LIST,
     EP_MEAL_ACCOUNTS,
@@ -1147,18 +1148,64 @@ class Dnevnik2Client:
         date_from: date,
         date_to: date,
     ) -> list[dict[str, Any]]:
-        """Оценки и коды посещаемости за период (/api/journal/estimate/table)."""
-        data = await self._request(
-            EP_ESTIMATE_TABLE,
-            params={
-                "p_limit": MARKS_LIMIT,
-                "p_page": "1",
-                "p_date_from": format_date(date_from),
-                "p_date_to": format_date(date_to),
-                "p_educations[]": str(education_id),
-            },
-        )
-        return self._items(data)
+        """Оценки и коды посещаемости за период (/api/journal/estimate/table) с автопагинацией."""
+        all_items: list[dict[str, Any]] = []
+        date_from_str = format_date(date_from)
+        date_to_str = format_date(date_to)
+        for page in range(1, 6):
+            data = await self._request(
+                EP_ESTIMATE_TABLE,
+                params={
+                    "p_limit": MARKS_LIMIT,
+                    "p_page": str(page),
+                    "p_date_from": date_from_str,
+                    "p_date_to": date_to_str,
+                    "p_educations[]": str(education_id),
+                },
+            )
+            page_items = self._items(data)
+            if not page_items:
+                break
+            all_items.extend(page_items)
+            if len(page_items) < 100 or len(page_items) >= int(MARKS_LIMIT):
+                break
+        return all_items
+
+    async def async_download_file(
+        self, file_uuid: str
+    ) -> tuple[bytes, str, str] | None:
+        """Скачивает прикреплённый к домашнему заданию файл (/api/filekit/file/download?p_uuid=...)."""
+        clean_uuid = str(file_uuid or "").strip()
+        if not clean_uuid:
+            return None
+        url = f"{BASE_URL}{EP_FILEKIT_DOWNLOAD}"
+        self._clear_session_cookie_jar()
+        try:
+            async with self._session.get(
+                url,
+                params={"p_uuid": clean_uuid},
+                headers=self._headers(include_auth=True),
+                timeout=self._timeout,
+                allow_redirects=True,
+                ssl=False,
+            ) as response:
+                self._clear_session_cookie_jar()
+                if response.status != 200:
+                    return None
+                content_type = (
+                    response.headers.get("Content-Type")
+                    or "application/octet-stream"
+                )
+                content_disp = response.headers.get("Content-Disposition") or ""
+                body = await response.read()
+                if "text/html" in content_type.lower() and (
+                    b"<html" in body[:512].lower()
+                    or b"<!doctype" in body[:512].lower()
+                ):
+                    return None
+                return body, content_type, content_disp
+        except Exception:
+            return None
 
     async def async_get_lessons(
         self,

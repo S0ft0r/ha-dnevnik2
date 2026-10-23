@@ -127,7 +127,8 @@ function applyTodoCardWrap(cardEl) {
     style.textContent =
       "ha-check-list-item { height: auto !important; min-height: 48px !important; } " +
       ".column { white-space: normal !important; overflow: visible !important; word-break: break-word !important; overflow-wrap: anywhere !important; padding-right: 8px !important; } " +
-      ".summary { white-space: pre-wrap !important; overflow: visible !important; text-overflow: unset !important; word-break: break-word !important; overflow-wrap: anywhere !important; line-height: 1.35 !important; display: block !important; }";
+      ".summary { white-space: pre-wrap !important; overflow: visible !important; text-overflow: unset !important; word-break: break-word !important; overflow-wrap: anywhere !important; line-height: 1.35 !important; display: block !important; } " +
+      ".description { white-space: pre-wrap !important; overflow: visible !important; text-overflow: unset !important; display: block !important; -webkit-line-clamp: unset !important; line-clamp: unset !important; word-break: break-word !important; overflow-wrap: anywhere !important; line-height: 1.35 !important; }";
     sr.appendChild(style);
   } else if (!isTarget && existing) {
     existing.remove();

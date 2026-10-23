@@ -5,6 +5,29 @@
 
 ---
 
+## [0.1.29] — 23/10/2026
+
+### Добавлено
+- **Учёт учебных периодов (четвертей / триместров / полугодий) и итоговых оценок (`manager.py`, `sensor.py`, `client.py`):**
+  - автоматическое определение текущего учебного периода по `group_id` учащегося через `/api/group/group/get-list-period` и расчёт `average_grade`, `subject_averages`, `absences_count` и `lates_count` строго в границах активной четверти/триместра/полугодия;
+  - в атрибуты `sensor.<student>_average_grade` добавлены `period_name`, `period_start`, `period_end`, `period_days_left`, словарь итоговых оценок `final_grades` и список учебных периодов `periods`.
+- **Разделение `summary` / `description`, прикреплённые файлы в ДЗ и локальный прокси скачивания (`todo.py`, `manager.py`, `__init__.py`, `frontend/dnevnik2-icons.js`):**
+  - в списках дел домашних заданий (`todo.<student>_homework`) в `summary` выводится название предмета (`Математика`), а в `description` (`<ha-markdown-element>`) — текст задания и кликабельные ссылки `📎 [Имя_файла](url)` на прикреплённые учителем файлы (`tasks[].files[]`);
+  - в `frontend/dnevnik2-icons.js` снято ограничение Home Assistant `-webkit-line-clamp: 3` / `line-clamp: 3` для `.description` в `hui-todo-list-card`, чтобы длинный текст задания и ссылки на файлы отображались полностью;
+  - добавлен встроенный HTTP-прокси `Dnevnik2FileProxyView` (`/api/dnevnik2/file/{entry_id}/{file_uuid}?sig=...`), скачивающий файлы с портала по текущей авторизованной сессии интеграции (работает в мобильном приложении Home Assistant Companion и любом браузере без кук портала);
+  - в атрибуты `text`, `uncompleted_text` и `tasks[].files[]` (и для `todo.*`, и для `sensor.*`) добавлены прямые и прокси-ссылки на прикреплённые файлы.
+- **Платформа `calendar` (`calendar.py`, `config_flow.py`, `translations/{ru,en}.json`, `icons.json`):**
+  - на подустройстве каждого учащегося добавлена сущность `calendar.<student>_schedule` («Календарь уроков») с отображением текущего/ближайшего урока, расписания по неделям и месяцам, кабинета (`location`), ФИО учителя и домашнего задания (`description`);
+  - в мастере первоначальной настройки (`ConfigFlow`) и в настройках интеграции (`OptionsFlow`) добавлен переключатель **«Создавать календарь уроков»** (`enable_calendar`, при отключении сущность календаря автоматически удаляется из `entity_registry`).
+
+### Исправлено
+- **Генерация события `dnevnik2_low_balance` при ручном изменении порога (`manager.py`, `__init__.py`):**
+  - при изменении сущности `number.<account>_balance_limit` («Лимит баланса питания») на карточке основного устройства кэш ранее отправленных уведомлений (`_low_balance_alerted`) теперь принудительно сбрасывается перед проверкой, благодаря чему событие `dnevnik2_low_balance` генерируется сразу для всех счетов с балансом ниже нового лимита.
+- **CI-валидация HACS (`.github/workflows/validate.yml`, `scripts/validate.py`):**
+  - активирован job `HACS Validation` (`hacs/action@main`) в GitHub Actions и добавлена проверка раскомментированного состояния job в `scripts/validate.py`.
+
+---
+
 ## [0.1.28] — 23/10/2026
 
 ### Исправлено

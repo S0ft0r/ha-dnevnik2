@@ -29,6 +29,9 @@ EP_SCHEDULE_LIST: Final = "/api/journal/schedule/list-by-education"
 EP_ACS_LIST: Final = "/api/journal/acs/list"
 EP_MEAL_ACCOUNTS: Final = "/fps/api/netrika/mobile/v1/accounts/"
 EP_MEAL_FPS_LIST: Final = "/api/journal/fps/list"
+EP_FILEKIT_DOWNLOAD: Final = "/api/filekit/file/download"
+
+FILE_PROXY_URL_PATH: Final = "/api/dnevnik2/file/{entry_id}/{file_uuid}"
 
 # Специальные коды посещаемости в таблице оценок (/api/journal/estimate/table)
 ABSENCE_CODE: Final = "30000"
@@ -45,6 +48,7 @@ CONF_FALLBACK_TOKEN: Final = "fallback_token"
 CONF_SCAN_INTERVAL: Final = "scan_interval"
 CONF_HOMEWORK_MODE: Final = "homework_mode"
 CONF_LESSONS_MODE: Final = "lessons_mode"
+CONF_ENABLE_CALENDAR: Final = "enable_calendar"
 CONF_BALANCE_LIMIT: Final = "balance_limit"
 
 OUTPUT_MODE_SENSOR: Final = "sensor"
@@ -53,6 +57,7 @@ OUTPUT_MODES: Final = [OUTPUT_MODE_TODO, OUTPUT_MODE_SENSOR]
 
 DEFAULT_HOMEWORK_MODE: Final = OUTPUT_MODE_TODO
 DEFAULT_LESSONS_MODE: Final = OUTPUT_MODE_SENSOR
+DEFAULT_ENABLE_CALENDAR: Final = True
 
 DEFAULT_BALANCE_LIMIT: Final = 200
 MIN_BALANCE_LIMIT: Final = 0

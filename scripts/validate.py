@@ -208,19 +208,20 @@ def check_brand_assets() -> None:
 
 
 def check_docs_icons() -> None:
-    readme_path = ROOT / "README.md"
-    if not readme_path.is_file():
-        return
-    readme_text = readme_path.read_text(encoding="utf-8")
-    referenced = set(re.findall(r"docs/icons/[a-zA-Z0-9_-]+\.svg", readme_text))
-    for rel in sorted(referenced):
-        svg_path = ROOT / rel
-        if not svg_path.is_file():
-            fail(f"README.md ссылается на отсутствующую иконку {rel}")
+    doc_files = [ROOT / "README.md", ROOT / "docs" / "DOCUMENTATION.md"]
+    for doc_path in doc_files:
+        if not doc_path.is_file():
             continue
-        svg_text = svg_path.read_text(encoding="utf-8")
-        if "#44739E" not in svg_text or "#41BDF5" not in svg_text:
-            fail(f"{rel}: иконка должна содержать цвета #44739E (light) и #41BDF5 (dark)")
+        doc_text = doc_path.read_text(encoding="utf-8")
+        referenced = set(re.findall(r"docs/icons/[a-zA-Z0-9_-]+\.svg", doc_text))
+        for rel in sorted(referenced):
+            svg_path = ROOT / rel
+            if not svg_path.is_file():
+                fail(f"{doc_path.name} ссылается на отсутствующую иконку {rel}")
+                continue
+            svg_text = svg_path.read_text(encoding="utf-8")
+            if "#44739E" not in svg_text or "#41BDF5" not in svg_text:
+                fail(f"{rel}: иконка должна содержать цвета #44739E (light) и #41BDF5 (dark)")
 
 
 def _collect_keys(obj: dict, prefix: str = "") -> dict[str, str]:

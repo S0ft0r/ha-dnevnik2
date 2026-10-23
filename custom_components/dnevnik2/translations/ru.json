@@ -16,6 +16,7 @@
           "name": "Название интеграции",
           "homework_mode": "Формат вывода домашних заданий",
           "lessons_mode": "Формат вывода расписания уроков",
+          "enable_calendar": "Создавать календарь уроков",
           "balance_limit": "Лимит низкого баланса питания (₽)",
           "scan_interval": "Интервал обновления данных (мин.)"
         }
@@ -47,6 +48,7 @@
         "data": {
           "homework_mode": "Формат вывода домашних заданий",
           "lessons_mode": "Формат вывода расписания уроков",
+          "enable_calendar": "Создавать календарь уроков",
           "scan_interval": "Интервал обновления данных (мин.)",
           "token": "Новый токен X-JWT-Token (необязательно)"
         }
@@ -119,6 +121,11 @@
       "balance_limit": {
         "name": "Лимит баланса питания"
       }
+    },
+    "calendar": {
+      "schedule": {
+        "name": "Календарь уроков"
+      }
     }
   },
   "common": {
@@ -135,6 +142,11 @@
     "no_lessons_text": "На сегодня уроков нет",
     "no_grades_today_text": "Сегодня оценок нет",
     "room_short": "каб.",
+    "file_default_name": "Файл",
+    "homework_prefix": "ДЗ",
+    "teacher_prefix": "Учитель",
+    "final_grade_keywords": "итогов|четверт|триместр|полугод|годов|экзамен|аттестац",
+    "year_period_keywords": "год|year",
     "meal_hot_keywords": "горяч|столов|hot",
     "meal_buffet_keywords": "буфет|доп|buffet|cafeteria",
     "direction_in_prefixes": "вход|приход|in|input|enter|entry|1",

@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from datetime import timedelta
+import hmac
 import logging
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
+
+from aiohttp import web
 
 from homeassistant.components.frontend import add_extra_js_url
-from homeassistant.components.http import StaticPathConfig
+from homeassistant.components.http import HomeAssistantView, StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
@@ -21,7 +25,10 @@ from homeassistant.helpers import (
 from homeassistant.helpers.event import async_track_time_interval
 
 from .const import (
+    BASE_URL,
     DOMAIN,
+    EP_FILEKIT_DOWNLOAD,
+    FILE_PROXY_URL_PATH,
     KEEP_ALIVE_INTERVAL_MIN,
     OUTPUT_MODE_SENSOR,
     OUTPUT_MODE_TODO,
@@ -36,7 +43,52 @@ PLATFORMS: list[Platform] = [
     Platform.BUTTON,
     Platform.NUMBER,
     Platform.TODO,
+    Platform.CALENDAR,
 ]
+
+
+class Dnevnik2FileProxyView(HomeAssistantView):
+    """HTTP-прокси скачивания прикреплённых к домашним заданиям файлов по активной сессии интеграции."""
+
+    url = FILE_PROXY_URL_PATH
+    name = f"api:{DOMAIN}:file"
+    requires_auth = False
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        """Инициализация прокси-обработчика файлов."""
+        self.hass = hass
+
+    async def get(
+        self, request: web.Request, entry_id: str, file_uuid: str
+    ) -> web.StreamResponse:
+        """Скачивает файл с портала по текущей сессии координатора и отдаёт клиенту."""
+        coordinator: Dnevnik2Coordinator | None = self.hass.data.get(
+            DOMAIN, {}
+        ).get(entry_id)
+        if not isinstance(coordinator, Dnevnik2Coordinator):
+            return web.Response(status=404, text="Integration entry not found")
+
+        sig = request.query.get("sig", "")
+        expected_sig = coordinator.file_download_signature(file_uuid)
+        if not sig or not hmac.compare_digest(sig, expected_sig):
+            return web.Response(status=403, text="Invalid file signature")
+
+        file_name = request.query.get("name", "") or f"{file_uuid}.bin"
+        result = await coordinator.client.async_download_file(file_uuid)
+        if result is None:
+            direct_url = f"{BASE_URL}{EP_FILEKIT_DOWNLOAD}?p_uuid={file_uuid}"
+            raise web.HTTPFound(location=direct_url)
+
+        body, content_type, content_disp = result
+        headers: dict[str, str] = {"Content-Type": content_type}
+        if content_disp:
+            headers["Content-Disposition"] = content_disp
+        else:
+            encoded_name = quote(file_name)
+            headers["Content-Disposition"] = (
+                f"attachment; filename*=UTF-8''{encoded_name}"
+            )
+        return web.Response(body=body, headers=headers)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -76,6 +128,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if js_file.is_file() and getattr(hass, "http", None) is not None:
         url_path = f"/{DOMAIN}_static/{DOMAIN}-icons.js"
         try:
+            if not hass.data[DOMAIN].get("_file_proxy_registered"):
+                hass.http.register_view(Dnevnik2FileProxyView(hass))
+                hass.data[DOMAIN]["_file_proxy_registered"] = True
             if not hass.data[DOMAIN].get("_frontend_registered"):
                 if hasattr(hass.http, "async_register_static_paths"):
                     await hass.http.async_register_static_paths(
@@ -178,8 +233,6 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
         entry.entry_id
     )
     if coordinator and not coordinator.should_reload_on_entry_update(entry):
-        if coordinator.data:
-            coordinator._emit_low_balance_events(None, coordinator.data)
         coordinator.async_update_listeners()
         return
     await hass.config_entries.async_reload(entry.entry_id)
@@ -195,10 +248,14 @@ def _remove_stale_mode_entities(
     ent_reg = er.async_get(hass)
     hw_mode = coordinator.homework_mode
     lessons_mode = coordinator.lessons_mode
+    enable_cal = coordinator.enable_calendar
 
     for ent in list(er.async_entries_for_config_entry(ent_reg, entry.entry_id)):
         uid = ent.unique_id or ""
         if uid.endswith("_meal_balance"):
+            ent_reg.async_remove(ent.entity_id)
+            continue
+        if ent.domain == "calendar" and not enable_cal:
             ent_reg.async_remove(ent.entity_id)
             continue
         if uid.endswith("_homework") or uid.endswith("_homework_tomorrow"):

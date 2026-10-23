@@ -5,11 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 import hashlib
+import hmac
 import json
 import logging
 from pathlib import Path
 import socket
 from typing import Any
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from aiohttp import DummyCookieJar
@@ -35,17 +37,21 @@ from .client import (
 )
 from .const import (
     ABSENCE_CODE,
+    BASE_URL,
     CONF_BALANCE_LIMIT,
+    CONF_ENABLE_CALENDAR,
     CONF_FALLBACK_TOKEN,
     CONF_HOMEWORK_MODE,
     CONF_LESSONS_MODE,
     CONF_SCAN_INTERVAL,
     CONF_TOKEN,
     DEFAULT_BALANCE_LIMIT,
+    DEFAULT_ENABLE_CALENDAR,
     DEFAULT_HOMEWORK_MODE,
     DEFAULT_LESSONS_MODE,
     DEFAULT_SCAN_INTERVAL_MIN,
     DOMAIN,
+    EP_FILEKIT_DOWNLOAD,
     EVENT_LOW_BALANCE,
     EVENT_NEW_GRADE,
     EVENT_TURNSTILE,
@@ -115,6 +121,16 @@ def _extract_hhmm(raw_time: str) -> str:
 
 
 @dataclass
+class HomeworkFile:
+    """Прикреплённый учителем файл к домашнему заданию."""
+
+    name: str
+    uuid: str
+    url: str
+    proxy_url: str
+
+
+@dataclass
 class HomeworkTask:
     """Одно домашнее задание ученика."""
 
@@ -123,6 +139,7 @@ class HomeworkTask:
     task: str
     due: date
     date_str: str
+    files: list[HomeworkFile] = field(default_factory=list)
 
 
 @dataclass
@@ -138,6 +155,7 @@ class LessonTask:
     teacher: str
     due: date
     date_str: str
+    homework_text: str = ""
 
 
 @dataclass
@@ -153,17 +171,26 @@ class StudentData:
     group_name: str
     group_id: str | None = None
     hash_uid: str = ""
+    period_name: str = ""
+    period_start_str: str = ""
+    period_end_str: str = ""
+    period_days_left: int | None = None
+    periods_list: list[dict[str, Any]] = field(default_factory=list)
     average_grade: float | None = None
     grades_count: int = 0
     absences_count: int = 0
     lates_count: int = 0
     subject_averages: dict[str, float] = field(default_factory=dict)
+    final_grades: dict[str, Any] = field(default_factory=dict)
     last_grade: str | None = None
     last_grade_attributes: dict[str, Any] = field(default_factory=dict)
     homework_tasks: list[HomeworkTask] = field(default_factory=list)
     homework_count: int = 0
     homework_attributes: dict[str, Any] = field(default_factory=dict)
     lesson_tasks: list[LessonTask] = field(default_factory=list)
+    calendar_lessons: list[LessonTask] = field(default_factory=list)
+    calendar_window_start: date | None = None
+    calendar_window_end: date | None = None
     lessons_today_count: int = 0
     schedule_today_attributes: dict[str, Any] = field(default_factory=dict)
     at_school: bool | None = None
@@ -234,6 +261,9 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
         self._known_grade_uids: dict[str, set[str]] = {}
         self._detected_today_grades: dict[tuple[str, date], list[dict[str, Any]]] = {}
         self._low_balance_alerted: dict[tuple[str, str], float] = {}
+        self._group_periods_cache: dict[
+            str, tuple[date, list[dict[str, Any]]]
+        ] = {}
         self._consecutive_auth_failures: int = 0
 
         scan_minutes = int(
@@ -296,6 +326,18 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
         )
 
     @property
+    def enable_calendar(self) -> bool:
+        """Включено ли создание сущностей календаря уроков (Platform.CALENDAR)."""
+        return bool(
+            self.entry.options.get(
+                CONF_ENABLE_CALENDAR,
+                self.entry.data.get(
+                    CONF_ENABLE_CALENDAR, DEFAULT_ENABLE_CALENDAR
+                ),
+            )
+        )
+
+    @property
     def scan_interval_minutes(self) -> int:
         """Выбранный интервал полного обновления данных (мин.)."""
         return int(
@@ -318,6 +360,7 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
     async def async_set_balance_limit(self, new_limit: int) -> None:
         """Обновляет порог низкого баланса питания с основного устройства без перезагрузки."""
         clamped = max(MIN_BALANCE_LIMIT, min(MAX_BALANCE_LIMIT, int(new_limit)))
+        self._low_balance_alerted.clear()
         new_options = {**self.entry.options, CONF_BALANCE_LIMIT: clamped}
         self.hass.config_entries.async_update_entry(
             self.entry, options=new_options
@@ -327,11 +370,12 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
         self.async_update_listeners()
 
     @property
-    def config_signature(self) -> tuple[str, str, int]:
+    def config_signature(self) -> tuple[str, str, bool, int]:
         """Сигнатура пользовательских настроек для фильтрации фонового обновления токена."""
         return (
             self.homework_mode,
             self.lessons_mode,
+            self.enable_calendar,
             self.scan_interval_minutes,
         )
 
@@ -765,6 +809,83 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
 
         self._emit_low_balance_events(prev_map, curr_map)
 
+    def file_download_signature(self, file_uuid: str) -> str:
+        """Вычисляет HMAC-подпись для безопасного скачивания файла через локальный прокси HA."""
+        secret = self.entry.entry_id.encode("utf-8")
+        msg = str(file_uuid or "").strip().encode("utf-8")
+        return hmac.new(secret, msg, hashlib.sha256).hexdigest()[:16]
+
+    def _extract_task_files(
+        self, source: dict[str, Any]
+    ) -> list[HomeworkFile]:
+        """Извлекает прикреплённые учителем файлы из объекта задания или урока."""
+        raw_files = source.get("files")
+        if not isinstance(raw_files, list):
+            raw_files = source.get("attachments")
+        if not isinstance(raw_files, list):
+            return []
+
+        default_name = self.tr_common("file_default_name") or "File"
+        extracted: list[HomeworkFile] = []
+        seen_keys: set[str] = set()
+        for f_obj in raw_files:
+            if not isinstance(f_obj, dict):
+                continue
+            f_name = (
+                _pick_str(f_obj, "file_name", "name", "filename", "title")
+                or default_name
+            )
+            f_uuid = _pick_str(f_obj, "uuid", "file_uuid", "p_uuid")
+            direct_url = ""
+            proxy_url = ""
+            if f_uuid:
+                direct_url = f"{BASE_URL}{EP_FILEKIT_DOWNLOAD}?p_uuid={f_uuid}"
+                sig = self.file_download_signature(f_uuid)
+                proxy_url = (
+                    f"/api/{DOMAIN}/file/{self.entry.entry_id}/{f_uuid}"
+                    f"?sig={sig}&name={quote(f_name)}"
+                )
+            else:
+                raw_url = _pick_str(f_obj, "url", "path", "link", "href")
+                if raw_url:
+                    direct_url = (
+                        raw_url
+                        if raw_url.startswith("http")
+                        else f"{BASE_URL}{raw_url}"
+                        if raw_url.startswith("/")
+                        else ""
+                    )
+                    proxy_url = direct_url
+
+            dedup_key = f_uuid or direct_url or f_name
+            if not dedup_key or dedup_key in seen_keys:
+                continue
+            if not direct_url and not f_uuid:
+                continue
+            seen_keys.add(dedup_key)
+            extracted.append(
+                HomeworkFile(
+                    name=f_name,
+                    uuid=f_uuid,
+                    url=direct_url,
+                    proxy_url=proxy_url or direct_url,
+                )
+            )
+        return extracted
+
+    @staticmethod
+    def _format_homework_line(task: HomeworkTask) -> str:
+        """Форматирует одну строку домашнего задания со ссылками на прикреплённые файлы."""
+        base = (
+            f"• [{task.date_str}] {task.subject}: {task.task}"
+            if task.task
+            else f"• [{task.date_str}] {task.subject}"
+        )
+        if not task.files:
+            return base
+        links = ", ".join(f"📎 [{f.name}]({f.url})" for f in task.files)
+        return f"{base} ({links})"
+
     def _build_homework_attributes(
         self, tasks: list[HomeworkTask]
     ) -> dict[str, Any]:
@@ -772,9 +893,7 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
         if not tasks:
             text = self.tr_common("no_homework_text")
         else:
-            lines = [
-                f"• [{t.date_str}] {t.subject}: {t.task}" for t in tasks
-            ]
+            lines = [self._format_homework_line(t) for t in tasks]
             text = "\n".join(lines)
         return {
             "text": text,
@@ -783,6 +902,15 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
                     "date": t.date_str,
                     "subject": t.subject,
                     "task": t.task,
+                    "files": [
+                        {
+                            "name": f.name,
+                            "uuid": f.uuid,
+                            "url": f.url,
+                            "proxy_url": f.proxy_url,
+                        }
+                        for f in t.files
+                    ],
                 }
                 for t in tasks
             ],
@@ -840,15 +968,13 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
         if not tasks:
             all_text = self.tr_common("no_homework_text")
         else:
-            all_text = "\n".join(
-                f"• [{t.date_str}] {t.subject}: {t.task}" for t in tasks
-            )
+            all_text = "\n".join(self._format_homework_line(t) for t in tasks)
 
         if not uncompleted:
             uncompleted_text = self.tr_common("no_homework_text")
         else:
             uncompleted_text = "\n".join(
-                f"• [{t.date_str}] {t.subject}: {t.task}" for t in uncompleted
+                self._format_homework_line(t) for t in uncompleted
             )
 
         return {
@@ -862,6 +988,15 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
                     "subject": t.subject,
                     "task": t.task,
                     "completed": self.is_item_completed(t.uid),
+                    "files": [
+                        {
+                            "name": f.name,
+                            "uuid": f.uuid,
+                            "url": f.url,
+                            "proxy_url": f.proxy_url,
+                        }
+                        for f in t.files
+                    ],
                 }
                 for t in tasks
             ],
@@ -957,6 +1092,109 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
 
         return result
 
+    async def _resolve_student_period(
+        self,
+        student: StudentData,
+        today_spb: date,
+        fallback_start: date,
+    ) -> tuple[date, date]:
+        """Определяет текущий учебный период (четверть/триместр/полугодие) по group_id ученика."""
+        group_id = student.group_id
+        if not group_id:
+            return fallback_start, today_spb
+
+        periods_raw: list[dict[str, Any]] = []
+        cached = self._group_periods_cache.get(str(group_id))
+        if cached and cached[0] == today_spb:
+            periods_raw = cached[1]
+        else:
+            try:
+                periods_raw = await self.client.async_get_periods(group_id)
+                if periods_raw:
+                    self._group_periods_cache[str(group_id)] = (
+                        today_spb,
+                        periods_raw,
+                    )
+            except Exception as err:
+                _LOGGER.debug(
+                    "Periods fetch skipped for group %s: %s", group_id, err
+                )
+                if cached:
+                    periods_raw = cached[1]
+
+        if not periods_raw:
+            return fallback_start, today_spb
+
+        year_kw = self.tr_list("year_period_keywords")
+        parsed: list[dict[str, Any]] = []
+        for item in periods_raw:
+            if not isinstance(item, dict):
+                continue
+            name = _pick_str(item, "name", "title", "period_name")
+            d_from = _parse_lesson_date(
+                _pick_str(
+                    item,
+                    "date_from",
+                    "date_start",
+                    "start_date",
+                    "datetime_from",
+                )
+            )
+            d_to = _parse_lesson_date(
+                _pick_str(
+                    item, "date_to", "date_end", "end_date", "datetime_to"
+                )
+            )
+            if not name or d_from is None or d_to is None or d_from > d_to:
+                continue
+            duration = (d_to - d_from).days
+            is_year = duration >= 200 or any(
+                k in name.lower() for k in year_kw
+            )
+            parsed.append(
+                {
+                    "name": name,
+                    "d_from": d_from,
+                    "d_to": d_to,
+                    "duration": duration,
+                    "is_year": is_year,
+                }
+            )
+
+        if not parsed:
+            return fallback_start, today_spb
+
+        parsed.sort(key=lambda p: (p["d_from"], p["duration"]))
+        sub_year = [p for p in parsed if not p["is_year"] and p["duration"] >= 7]
+        pool = sub_year if sub_year else parsed
+
+        active = [
+            p for p in pool if p["d_from"] <= today_spb <= p["d_to"]
+        ]
+        if active:
+            chosen = min(active, key=lambda p: p["duration"])
+        else:
+            past = [p for p in pool if p["d_to"] < today_spb]
+            if past:
+                chosen = max(past, key=lambda p: (p["d_to"], -p["duration"]))
+            else:
+                chosen = min(pool, key=lambda p: (p["d_from"], p["duration"]))
+
+        student.period_name = chosen["name"]
+        student.period_start_str = chosen["d_from"].strftime("%d.%m.%Y")
+        student.period_end_str = chosen["d_to"].strftime("%d.%m.%Y")
+        student.period_days_left = max(0, (chosen["d_to"] - today_spb).days)
+        student.periods_list = [
+            {
+                "name": p["name"],
+                "date_from": p["d_from"].strftime("%d.%m.%Y"),
+                "date_to": p["d_to"].strftime("%d.%m.%Y"),
+                "is_current": p is chosen,
+            }
+            for p in parsed
+        ]
+        return chosen["d_from"], chosen["d_to"]
+
     async def _populate_student_details(
         self,
         student: StudentData,
@@ -967,18 +1205,31 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
     ) -> None:
         """Заполняет оценки, расписание, ДЗ, СКУД и баланс питания для одного ученика."""
         edu_id = student.education_id
+        active_start, active_end = await self._resolve_student_period(
+            student, today_spb, period_start
+        )
+        marks_to = max(today_spb, active_end)
 
         try:
             marks_raw = await self.client.async_get_marks(
-                edu_id, period_start, today_spb
+                edu_id, active_start, marks_to
             )
-            self._apply_marks(student, marks_raw, today_spb)
+            self._apply_marks(
+                student,
+                marks_raw,
+                today_spb,
+                period_start=active_start,
+                period_end=active_end,
+            )
         except Exception as err:
             _LOGGER.debug("Marks fetch skipped for %s: %s", edu_id, err)
 
+        cal_start = today_spb - timedelta(days=7)
+        cal_end = max(period_end, today_spb + timedelta(days=14))
+        lessons_raw: list[dict[str, Any]] = []
         try:
             lessons_raw = await self.client.async_get_lessons(
-                edu_id, today_spb, period_end
+                edu_id, cal_start, cal_end
             )
             self._apply_lessons_homework(student, lessons_raw, today_spb)
         except Exception as err:
@@ -986,9 +1237,16 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
 
         try:
             schedule_raw = await self.client.async_get_schedule(
-                edu_id, today_spb, today_spb + timedelta(days=1)
+                edu_id, cal_start, cal_end
             )
-            self._apply_schedule(student, schedule_raw, today_spb)
+            self._apply_schedule(
+                student,
+                schedule_raw,
+                today_spb,
+                lessons_raw=lessons_raw,
+                window_start=cal_start,
+                window_end=cal_end,
+            )
         except Exception as err:
             _LOGGER.debug("Schedule fetch skipped for %s: %s", edu_id, err)
 
@@ -1011,14 +1269,19 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
         student: StudentData,
         marks_raw: list[dict[str, Any]],
         today_spb: date,
+        *,
+        period_start: date | None = None,
+        period_end: date | None = None,
     ) -> None:
         numeric_grades: list[int] = []
         by_subject: dict[str, list[int]] = {}
+        final_grades: dict[str, Any] = {}
         absences = 0
         lates = 0
         graded_rows: list[tuple[date, int, dict[str, Any], str]] = []
         today_grades: list[dict[str, Any]] = []
         today_seen_keys: set[str] = set()
+        final_kw = self.tr_list("final_grade_keywords")
 
         edu_id = student.education_id
         known_set = self._known_grade_uids.get(edu_id)
@@ -1046,22 +1309,29 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
                 "mark",
                 "estimate_value",
             )
+            date_str = _pick_str(
+                row, "date", "date_estimate", "lesson_date"
+            )
+            mark_dt = _parse_lesson_date(date_str)
+            in_period = True
+            if mark_dt is not None:
+                if period_start is not None and mark_dt < period_start:
+                    in_period = False
+                if period_end is not None and mark_dt > period_end:
+                    in_period = False
+
             if code == ABSENCE_CODE:
-                absences += 1
+                if in_period:
+                    absences += 1
                 continue
             if code == LATE_CODE:
-                lates += 1
+                if in_period:
+                    lates += 1
                 continue
             if val_str.isdigit():
                 grade_num = int(val_str)
                 if 1 <= grade_num <= 5:
-                    numeric_grades.append(grade_num)
                     subj = _pick_str(row, "subject_name", "subject") or "—"
-                    by_subject.setdefault(subj, []).append(grade_num)
-                    date_str = _pick_str(
-                        row, "date", "date_estimate", "lesson_date"
-                    )
-                    mark_dt = _parse_lesson_date(date_str) or date.min
                     created_dt = _parse_lesson_date(
                         _pick_str(
                             row,
@@ -1079,6 +1349,17 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
                         "type",
                     )
                     comment = _pick_str(row, "estimate_comment", "comment")
+                    is_final = bool(
+                        work_type
+                        and final_kw
+                        and any(k in work_type.lower() for k in final_kw)
+                    )
+                    if is_final:
+                        final_grades[subj] = grade_num
+                    elif in_period:
+                        numeric_grades.append(grade_num)
+                        by_subject.setdefault(subj, []).append(grade_num)
+
                     row_id = _pick_str(row, "id", "estimate_id") or str(idx)
                     grade_uid = f"{row_id}|{date_str}|{subj}|{val_str}|{work_type}"
                     current_set.add(grade_uid)
@@ -1102,7 +1383,9 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
                         today_seen_keys.add(grade_uid)
                         today_grades.append(grade_entry)
 
-                    graded_rows.append((mark_dt, idx, row, val_str))
+                    graded_rows.append(
+                        (mark_dt or date.min, idx, row, val_str)
+                    )
 
         self._known_grade_uids[edu_id] = current_set
 
@@ -1131,6 +1414,7 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
         student.grades_count = len(numeric_grades)
         student.absences_count = absences
         student.lates_count = lates
+        student.final_grades = dict(sorted(final_grades.items()))
         if numeric_grades:
             student.average_grade = round(
                 sum(numeric_grades) / len(numeric_grades), 2
@@ -1192,7 +1476,7 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
                 continue
             subj = _pick_str(row, "subject_name", "subject", "name") or "—"
             tasks = row.get("tasks")
-            extracted_texts: list[str] = []
+            extracted_entries: list[tuple[str, list[HomeworkFile]]] = []
             if isinstance(tasks, list) and tasks:
                 for task_obj in tasks:
                     if not isinstance(task_obj, dict):
@@ -1205,8 +1489,9 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
                         "text",
                         "description",
                     )
-                    if task_text:
-                        extracted_texts.append(task_text)
+                    task_files = self._extract_task_files(task_obj)
+                    if task_text or task_files:
+                        extracted_entries.append((task_text, task_files))
             else:
                 hw_text = _pick_str(
                     row,
@@ -1216,12 +1501,16 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
                     "lesson_task",
                     "task_name",
                 )
-                if hw_text:
-                    extracted_texts.append(hw_text)
+                row_files = self._extract_task_files(row)
+                if hw_text or row_files:
+                    extracted_entries.append((hw_text, row_files))
 
-            for text in extracted_texts:
+            for text, files in extracted_entries:
+                uid_detail = text or "|".join(
+                    f.uuid or f.url or f.name for f in files
+                )
                 uid = make_item_uid(
-                    "hw", student.education_id, due_dt, subj, text
+                    "hw", student.education_id, due_dt, subj, uid_detail
                 )
                 if uid in seen_uids:
                     continue
@@ -1233,6 +1522,7 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
                         task=text,
                         due=due_dt,
                         date_str=due_dt.strftime("%d.%m.%Y"),
+                        files=files,
                     )
                 )
 
@@ -1243,21 +1533,28 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
             homework_tasks
         )
 
-    def _apply_schedule(
+    def _parse_schedule_rows(
         self,
-        student: StudentData,
+        education_id: str,
         schedule_raw: list[dict[str, Any]],
-        today_spb: date,
-    ) -> None:
-        today_str = today_spb.strftime("%d.%m.%Y")
-        lesson_tasks: list[LessonTask] = []
+        lessons_raw: list[dict[str, Any]] | None = None,
+        hw_by_date_subj: dict[tuple[date, str], str] | None = None,
+    ) -> list[LessonTask]:
+        """Преобразует сырые строки расписания и проведённых уроков в отсортированный список LessonTask."""
+        merged_by_key: dict[tuple[date, str, str], LessonTask] = {}
 
-        for idx, row in enumerate(schedule_raw, start=1):
+        all_sources: list[dict[str, Any]] = list(schedule_raw)
+        if lessons_raw:
+            all_sources.extend(lessons_raw)
+
+        for idx, row in enumerate(all_sources, start=1):
+            if not isinstance(row, dict):
+                continue
             row_date_raw = _pick_str(
                 row, "date", "datetime_from", "lesson_date", "date_from"
             )
             row_dt = _parse_lesson_date(row_date_raw)
-            if row_dt != today_spb:
+            if row_dt is None:
                 continue
             subj = _pick_str(row, "subject_name", "subject", "name") or "—"
             num = (
@@ -1278,38 +1575,155 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
             teacher = _pick_str(
                 row, "teacher_name", "teacher", "teachers_name", "employee_name"
             )
+            hw_text = (
+                hw_by_date_subj.get((row_dt, subj), "")
+                if hw_by_date_subj
+                else ""
+            )
+            if not hw_text:
+                tasks = row.get("tasks")
+                if isinstance(tasks, list) and tasks:
+                    parts = [
+                        _pick_str(
+                            t,
+                            "task_name",
+                            "task",
+                            "name",
+                            "text",
+                            "description",
+                        )
+                        for t in tasks
+                        if isinstance(t, dict)
+                    ]
+                    hw_text = "; ".join(p for p in parts if p)
+                else:
+                    hw_text = _pick_str(
+                        row,
+                        "task",
+                        "homework",
+                        "hometask",
+                        "lesson_task",
+                        "task_name",
+                    )
+
+            dedup_key = (row_dt, num, subj)
+            existing = merged_by_key.get(dedup_key)
+            if existing is not None:
+                if not existing.time_from and time_from:
+                    existing.time_from = time_from
+                if not existing.time_to and time_to:
+                    existing.time_to = time_to
+                if not existing.room and room:
+                    existing.room = room
+                if not existing.teacher and teacher:
+                    existing.teacher = teacher
+                if not existing.homework_text and hw_text:
+                    existing.homework_text = hw_text
+                continue
+
             uid = make_item_uid(
                 "lsn",
-                student.education_id,
-                today_spb,
+                education_id,
+                row_dt,
                 f"{num}:{subj}",
                 time_from,
             )
-            lesson_tasks.append(
-                LessonTask(
-                    uid=uid,
-                    number=num,
-                    subject=subj,
-                    time_from=time_from,
-                    time_to=time_to,
-                    room=room,
-                    teacher=teacher,
-                    due=today_spb,
-                    date_str=today_str,
-                )
+            merged_by_key[dedup_key] = LessonTask(
+                uid=uid,
+                number=num,
+                subject=subj,
+                time_from=time_from,
+                time_to=time_to,
+                room=room,
+                teacher=teacher,
+                due=row_dt,
+                date_str=row_dt.strftime("%d.%m.%Y"),
+                homework_text=hw_text,
             )
 
-        lesson_tasks.sort(
+        items = list(merged_by_key.values())
+        items.sort(
             key=lambda item: (
+                item.due,
                 int(item.number) if item.number.isdigit() else 99,
                 item.time_from,
             )
         )
+        return items
+
+    def _apply_schedule(
+        self,
+        student: StudentData,
+        schedule_raw: list[dict[str, Any]],
+        today_spb: date,
+        *,
+        lessons_raw: list[dict[str, Any]] | None = None,
+        window_start: date | None = None,
+        window_end: date | None = None,
+    ) -> None:
+        today_str = today_spb.strftime("%d.%m.%Y")
+        hw_by_date_subj: dict[tuple[date, str], str] = {}
+        for hw in student.homework_tasks:
+            key = (hw.due, hw.subject)
+            if hw.task and key not in hw_by_date_subj:
+                hw_by_date_subj[key] = hw.task
+
+        all_lessons = self._parse_schedule_rows(
+            student.education_id,
+            schedule_raw,
+            lessons_raw=lessons_raw,
+            hw_by_date_subj=hw_by_date_subj,
+        )
+        lesson_tasks = [
+            item for item in all_lessons if item.due == today_spb
+        ]
         student.lesson_tasks = lesson_tasks
+        student.calendar_lessons = all_lessons
+        student.calendar_window_start = window_start
+        student.calendar_window_end = window_end
         student.lessons_today_count = len(lesson_tasks)
         student.schedule_today_attributes = self._build_lessons_attributes(
             today_str, lesson_tasks
         )
+
+    async def async_get_calendar_lessons(
+        self, education_id: str, start_date: date, end_date: date
+    ) -> list[LessonTask]:
+        """Возвращает уроки расписания для календаря за произвольный диапазон дат."""
+        st = self.students.get(education_id)
+        if (
+            st is not None
+            and st.calendar_window_start is not None
+            and st.calendar_window_end is not None
+            and st.calendar_window_start <= start_date
+            and end_date <= st.calendar_window_end
+            and st.calendar_lessons
+        ):
+            return [
+                item
+                for item in st.calendar_lessons
+                if start_date <= item.due <= end_date
+            ]
+
+        try:
+            schedule_raw = await self.client.async_get_schedule(
+                education_id, start_date, end_date
+            )
+        except Exception:
+            schedule_raw = []
+        try:
+            lessons_raw = await self.client.async_get_lessons(
+                education_id, start_date, end_date
+            )
+        except Exception:
+            lessons_raw = []
+
+        parsed = self._parse_schedule_rows(
+            education_id, schedule_raw, lessons_raw=lessons_raw
+        )
+        return [
+            item for item in parsed if start_date <= item.due <= end_date
+        ]
 
     def _apply_attendance(
         self, student: StudentData, acs_raw: list[dict[str, Any]]

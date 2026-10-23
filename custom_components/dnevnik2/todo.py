@@ -133,23 +133,36 @@ class Dnevnik2StudentHomeworkTodo(_BaseStudentTodo):
 
     @property
     def todo_items(self) -> list[TodoItem] | None:
-        """Актуальные домашние задания ученика с датой сдачи и отметкой выполнения."""
+        """Актуальные домашние задания ученика (предмет в summary, задание и ссылки на файлы в description)."""
         st = self._student
         if not st:
             return []
-        return [
-            TodoItem(
-                uid=task.uid,
-                summary=f"{task.subject}: {task.task}",
-                due=task.due,
-                status=(
-                    TodoItemStatus.COMPLETED
-                    if self.coordinator.is_item_completed(task.uid)
-                    else TodoItemStatus.NEEDS_ACTION
-                ),
+        items: list[TodoItem] = []
+        for task in st.homework_tasks:
+            desc_parts: list[str] = []
+            if task.task:
+                desc_parts.append(task.task)
+            for f in task.files:
+                link_target = f.proxy_url or f.url
+                if link_target:
+                    desc_parts.append(f"📎 [{f.name}]({link_target})")
+                else:
+                    desc_parts.append(f"📎 {f.name}")
+            description = "\n".join(desc_parts) if desc_parts else None
+            items.append(
+                TodoItem(
+                    uid=task.uid,
+                    summary=task.subject,
+                    description=description,
+                    due=task.due,
+                    status=(
+                        TodoItemStatus.COMPLETED
+                        if self.coordinator.is_item_completed(task.uid)
+                        else TodoItemStatus.NEEDS_ACTION
+                    ),
+                )
             )
-            for task in st.homework_tasks
-        ]
+        return items
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

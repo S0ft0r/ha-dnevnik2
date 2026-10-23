@@ -42,6 +42,9 @@ extract_jwt_token = getattr(_client_mod, "extract_jwt_token", None)
 CONF_BALANCE_LIMIT = getattr(
     _const_mod, "CONF_BALANCE_LIMIT", "balance_limit"
 )
+CONF_ENABLE_CALENDAR = getattr(
+    _const_mod, "CONF_ENABLE_CALENDAR", "enable_calendar"
+)
 CONF_FALLBACK_TOKEN = getattr(
     _const_mod, "CONF_FALLBACK_TOKEN", "fallback_token"
 )
@@ -51,6 +54,9 @@ CONF_NAME = getattr(_const_mod, "CONF_NAME", "name")
 CONF_SCAN_INTERVAL = getattr(_const_mod, "CONF_SCAN_INTERVAL", "scan_interval")
 CONF_TOKEN = getattr(_const_mod, "CONF_TOKEN", "token")
 DEFAULT_BALANCE_LIMIT = getattr(_const_mod, "DEFAULT_BALANCE_LIMIT", 200)
+DEFAULT_ENABLE_CALENDAR = getattr(
+    _const_mod, "DEFAULT_ENABLE_CALENDAR", True
+)
 DEFAULT_HOMEWORK_MODE = getattr(_const_mod, "DEFAULT_HOMEWORK_MODE", "todo")
 DEFAULT_LESSONS_MODE = getattr(_const_mod, "DEFAULT_LESSONS_MODE", "todo")
 DEFAULT_SCAN_INTERVAL_MIN = getattr(_const_mod, "DEFAULT_SCAN_INTERVAL_MIN", 30)
@@ -321,6 +327,9 @@ class Dnevnik2ConfigFlow(ConfigFlow, domain=DOMAIN):
             lessons_mode = str(
                 user_input.get(CONF_LESSONS_MODE, DEFAULT_LESSONS_MODE)
             )
+            enable_calendar = bool(
+                user_input.get(CONF_ENABLE_CALENDAR, DEFAULT_ENABLE_CALENDAR)
+            )
             scan_interval = int(
                 user_input.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_MIN)
             )
@@ -335,6 +344,7 @@ class Dnevnik2ConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_FALLBACK_TOKEN: self._validated_token,
                     CONF_HOMEWORK_MODE: homework_mode,
                     CONF_LESSONS_MODE: lessons_mode,
+                    CONF_ENABLE_CALENDAR: enable_calendar,
                     CONF_SCAN_INTERVAL: scan_interval,
                     CONF_BALANCE_LIMIT: balance_limit,
                 },
@@ -361,6 +371,9 @@ class Dnevnik2ConfigFlow(ConfigFlow, domain=DOMAIN):
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
+                vol.Optional(
+                    CONF_ENABLE_CALENDAR, default=DEFAULT_ENABLE_CALENDAR
+                ): selector.BooleanSelector(),
                 vol.Optional(
                     CONF_BALANCE_LIMIT, default=DEFAULT_BALANCE_LIMIT
                 ): selector.NumberSelector(
@@ -490,6 +503,9 @@ class Dnevnik2OptionsFlow(OptionsFlow):
             new_options[CONF_LESSONS_MODE] = str(
                 user_input.get(CONF_LESSONS_MODE, DEFAULT_LESSONS_MODE)
             )
+            new_options[CONF_ENABLE_CALENDAR] = bool(
+                user_input.get(CONF_ENABLE_CALENDAR, DEFAULT_ENABLE_CALENDAR)
+            )
             new_options[CONF_SCAN_INTERVAL] = int(
                 user_input.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_MIN)
             )
@@ -535,6 +551,14 @@ class Dnevnik2OptionsFlow(OptionsFlow):
             CONF_LESSONS_MODE,
             self._entry.data.get(CONF_LESSONS_MODE, DEFAULT_LESSONS_MODE),
         )
+        current_enable_calendar = bool(
+            self._entry.options.get(
+                CONF_ENABLE_CALENDAR,
+                self._entry.data.get(
+                    CONF_ENABLE_CALENDAR, DEFAULT_ENABLE_CALENDAR
+                ),
+            )
+        )
         current_interval = self._entry.options.get(
             CONF_SCAN_INTERVAL,
             self._entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_MIN),
@@ -560,6 +584,9 @@ class Dnevnik2OptionsFlow(OptionsFlow):
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
+                vol.Optional(
+                    CONF_ENABLE_CALENDAR, default=current_enable_calendar
+                ): selector.BooleanSelector(),
                 vol.Required(
                     CONF_SCAN_INTERVAL, default=current_interval
                 ): selector.NumberSelector(

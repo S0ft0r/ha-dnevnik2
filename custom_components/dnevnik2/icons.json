@@ -67,6 +67,11 @@
       "refresh": {
         "default": "mdi:database-sync"
       }
+    },
+    "calendar": {
+      "schedule": {
+        "default": "mdi:calendar-clock"
+      }
     }
   }
 }

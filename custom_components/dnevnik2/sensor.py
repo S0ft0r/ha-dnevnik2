@@ -231,16 +231,24 @@ class Dnevnik2AverageGradeSensor(_BaseStudentSensor):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Разбивка средних баллов по предметам и статистика посещаемости."""
+        """Разбивка средних баллов по предметам, текущий период, итоговые оценки и статистика посещаемости."""
         st = self._student
         if not st:
             return {}
-        return {
+        attrs: dict[str, Any] = {
+            "period_name": st.period_name or None,
+            "period_start": st.period_start_str or None,
+            "period_end": st.period_end_str or None,
+            "period_days_left": st.period_days_left,
             "grades_count": st.grades_count,
             "absences_count": st.absences_count,
             "lates_count": st.lates_count,
             "subject_averages": st.subject_averages,
+            "final_grades": st.final_grades,
         }
+        if st.periods_list:
+            attrs["periods"] = st.periods_list
+        return attrs
 
 
 class Dnevnik2LastGradeSensor(_BaseStudentSensor):

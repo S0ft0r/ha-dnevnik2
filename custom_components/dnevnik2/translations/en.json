@@ -16,6 +16,7 @@
           "name": "Integration name",
           "homework_mode": "Homework output format",
           "lessons_mode": "Lessons schedule output format",
+          "enable_calendar": "Create lessons calendar",
           "balance_limit": "Low meal balance limit (₽)",
           "scan_interval": "Update interval (min)"
         }
@@ -47,6 +48,7 @@
         "data": {
           "homework_mode": "Homework output format",
           "lessons_mode": "Lessons schedule output format",
+          "enable_calendar": "Create lessons calendar",
           "scan_interval": "Update interval (min.)",
           "token": "New X-JWT-Token (optional)"
         }
@@ -119,6 +121,11 @@
       "balance_limit": {
         "name": "Meal balance limit"
       }
+    },
+    "calendar": {
+      "schedule": {
+        "name": "Lesson calendar"
+      }
     }
   },
   "common": {
@@ -135,6 +142,11 @@
     "no_lessons_text": "No lessons today",
     "no_grades_today_text": "No grades today",
     "room_short": "rm.",
+    "file_default_name": "File",
+    "homework_prefix": "HW",
+    "teacher_prefix": "Teacher",
+    "final_grade_keywords": "итогов|четверт|триместр|полугод|годов|экзамен|аттестац|final|quarter|trimester|semester|annual|exam",
+    "year_period_keywords": "год|year",
     "meal_hot_keywords": "горяч|столов|hot",
     "meal_buffet_keywords": "буфет|доп|buffet|cafeteria",
     "direction_in_prefixes": "вход|приход|in|input|enter|entry|1",
