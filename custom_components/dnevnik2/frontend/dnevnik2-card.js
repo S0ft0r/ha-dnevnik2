@@ -9,7 +9,7 @@
  */
 
 const CARD_TYPE = "dnevnik2-card";
-const CARD_VERSION = "0.1.32.1";
+const CARD_VERSION = "0.1.32.2";
 
 const SVG_ICONS = {
   gradeAvg:
@@ -1078,16 +1078,39 @@ class Dnevnik2Card extends HTMLElement {
 
     if (deviceId && hass.entities) {
       for (const [entId, meta] of Object.entries(hass.entities)) {
-        if (meta.device_id !== deviceId) continue;
+        if (!meta || meta.device_id !== deviceId) continue;
         const uniqueId = String(meta.unique_id || "");
+        const translationKey = String(meta.translation_key || "");
+        const displayName = [
+          meta.name,
+          meta.original_name,
+          hass.states[entId]?.attributes?.friendly_name,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
         const hasKeySuffix = (suffix) =>
-          entId.endsWith(suffix) || uniqueId.endsWith(suffix);
+          entId.endsWith(suffix) ||
+          uniqueId.endsWith(suffix) ||
+          translationKey.endsWith(suffix);
+        const isHotBalance =
+          hasKeySuffix("_meal_hot_balance") ||
+          entId.endsWith("_stolovaya") ||
+          displayName.includes("столов") ||
+          displayName.includes("cafeteria") ||
+          displayName.includes("hot meal");
+        const isBuffetBalance =
+          hasKeySuffix("_meal_buffet_balance") ||
+          entId.endsWith("_bufet") ||
+          displayName.includes("буфет") ||
+          displayName.includes("buffet");
+
         if (hasKeySuffix("_average_grade")) ids.average_grade = entId;
         else if (hasKeySuffix("_last_grade")) ids.last_grade = entId;
         else if (hasKeySuffix("_at_school")) ids.at_school = entId;
         else if (hasKeySuffix("_turnstile_last")) ids.turnstile_last = entId;
-        else if (hasKeySuffix("_meal_hot_balance")) ids.meal_hot = entId;
-        else if (hasKeySuffix("_meal_buffet_balance")) ids.meal_buffet = entId;
+        else if (isHotBalance) ids.meal_hot = entId;
+        else if (isBuffetBalance) ids.meal_buffet = entId;
         else if (hasKeySuffix("_homework")) {
           if (!ids.homework || entId.startsWith("todo.")) ids.homework = entId;
         } else if (hasKeySuffix("_lessons_today")) {
