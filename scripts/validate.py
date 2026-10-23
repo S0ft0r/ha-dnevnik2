@@ -157,11 +157,15 @@ def check_hacs_json() -> None:
     if not wf_validate.is_file():
         fail("Не найден .github/workflows/validate.yml")
     else:
-        wf_text = wf_validate.read_text(encoding="utf-8")
-        if "hacs/action@" not in wf_text or "category: integration" not in wf_text:
-            fail(".github/workflows/validate.yml: должна быть включена проверка hacs/action с category: integration")
-        if "home-assistant/actions/hassfest@" not in wf_text:
-            fail(".github/workflows/validate.yml: должна быть включена проверка hassfest")
+        wf_lines = [
+            ln for ln in wf_validate.read_text(encoding="utf-8").splitlines()
+            if not ln.strip().startswith("#")
+        ]
+        wf_active = "\n".join(wf_lines)
+        if "hacs/action@" not in wf_active or "category: integration" not in wf_active:
+            fail(".github/workflows/validate.yml: должна быть активно включена проверка hacs/action с category: integration")
+        if "home-assistant/actions/hassfest@" not in wf_active:
+            fail(".github/workflows/validate.yml: должна быть активно включена проверка hassfest")
 
 
 def _read_png_dimensions(path: Path) -> tuple[int, int] | None:
