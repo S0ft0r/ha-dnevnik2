@@ -113,6 +113,13 @@ def check_manifest() -> None:
         chg_content = chg_path.read_text(encoding="utf-8")
         if version not in chg_content:
             fail(f"CHANGELOG.md: текущая версия ({version}) не отражена в истории изменений")
+    rel_wf_path = ROOT / ".github" / "workflows" / "release.yml"
+    if rel_wf_path.is_file():
+        rel_wf_content = rel_wf_path.read_text(encoding="utf-8")
+        if f'default: "v{version}"' not in rel_wf_content:
+            fail(
+                f".github/workflows/release.yml: тег по умолчанию не совпадает с manifest.json (ожидается v{version})"
+            )
 
 
 def check_hacs_json() -> None:

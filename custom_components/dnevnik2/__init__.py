@@ -124,29 +124,53 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             raise
         _LOGGER.warning("%s: %s", entry.title, err)
 
-    js_file = Path(__file__).parent / "frontend" / f"{DOMAIN}-icons.js"
-    if js_file.is_file() and getattr(hass, "http", None) is not None:
-        url_path = f"/{DOMAIN}_static/{DOMAIN}-icons.js"
+    frontend_dir = Path(__file__).parent / "frontend"
+    js_assets = [
+        (f"{DOMAIN}-icons.js", f"/{DOMAIN}_static/{DOMAIN}-icons.js"),
+        (f"{DOMAIN}-card.js", f"/{DOMAIN}_static/{DOMAIN}-card.js"),
+    ]
+    if getattr(hass, "http", None) is not None:
         try:
             if not hass.data[DOMAIN].get("_file_proxy_registered"):
                 hass.http.register_view(Dnevnik2FileProxyView(hass))
                 hass.data[DOMAIN]["_file_proxy_registered"] = True
-            if not hass.data[DOMAIN].get("_frontend_registered"):
+
+            existing_assets = [
+                (frontend_dir / fname, url_path)
+                for fname, url_path in js_assets
+                if (frontend_dir / fname).is_file()
+            ]
+            if existing_assets and not hass.data[DOMAIN].get(
+                "_frontend_registered"
+            ):
                 if hasattr(hass.http, "async_register_static_paths"):
                     await hass.http.async_register_static_paths(
-                        [StaticPathConfig(url_path, str(js_file), cache_headers=False)]
+                        [
+                            StaticPathConfig(
+                                url_path, str(fpath), cache_headers=False
+                            )
+                            for fpath, url_path in existing_assets
+                        ]
                     )
                 elif hasattr(hass.http, "register_static_path"):
-                    hass.http.register_static_path(
-                        url_path, str(js_file), cache_headers=False
-                    )
+                    for fpath, url_path in existing_assets:
+                        hass.http.register_static_path(
+                            url_path, str(fpath), cache_headers=False
+                        )
                 hass.data[DOMAIN]["_frontend_registered"] = True
-            ver = int(js_file.stat().st_mtime)
-            if hass.data[DOMAIN].get("_frontend_mtime") != ver:
-                add_extra_js_url(hass, f"{url_path}?v={ver}")
-                hass.data[DOMAIN]["_frontend_mtime"] = ver
+
+            mtime_map: dict[str, int] = hass.data[DOMAIN].setdefault(
+                "_frontend_mtimes", {}
+            )
+            for fpath, url_path in existing_assets:
+                ver = int(fpath.stat().st_mtime)
+                if mtime_map.get(url_path) != ver:
+                    add_extra_js_url(hass, f"{url_path}?v={ver}")
+                    mtime_map[url_path] = ver
         except Exception as err:
-            _LOGGER.warning("Failed to register %s custom icons: %s", DOMAIN, err)
+            _LOGGER.warning(
+                "Failed to register %s frontend assets: %s", DOMAIN, err
+            )
 
     dev_reg = dr.async_get(hass)
     main_device = dev_reg.async_get_or_create(

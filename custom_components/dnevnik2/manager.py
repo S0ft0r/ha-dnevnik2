@@ -182,6 +182,10 @@ class StudentData:
     lates_count: int = 0
     subject_averages: dict[str, float] = field(default_factory=dict)
     final_grades: dict[str, Any] = field(default_factory=dict)
+    period_grades: dict[str, dict[str, int]] = field(default_factory=dict)
+    grades_by_date_subject: dict[tuple[str, str], list[int]] = field(
+        default_factory=dict
+    )
     last_grade: str | None = None
     last_grade_attributes: dict[str, Any] = field(default_factory=dict)
     homework_tasks: list[HomeworkTask] = field(default_factory=list)
@@ -917,7 +921,13 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
         }
 
     def _build_lessons_attributes(
-        self, today_str: str, lessons: list[LessonTask]
+        self,
+        today_str: str,
+        lessons: list[LessonTask],
+        *,
+        next_date_str: str = "",
+        next_lessons: list[LessonTask] | None = None,
+        grades_map: dict[tuple[str, str], list[int]] | None = None,
     ) -> dict[str, Any]:
         """Формирует готовый текстовый атрибут и структуру уроков для сенсора расписания."""
         if not lessons:
@@ -941,21 +951,36 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
                     f"{item.number}.{time_part} — {item.subject}{suffix}"
                 )
             text = "\n".join(lines)
-        return {
+
+        def _serialize_lesson(item: LessonTask) -> dict[str, Any]:
+            row_grades = (
+                grades_map.get((item.date_str, item.subject), [])
+                if grades_map
+                else []
+            )
+            return {
+                "uid": item.uid,
+                "number": item.number,
+                "subject": item.subject,
+                "time_from": item.time_from,
+                "time_to": item.time_to,
+                "room": item.room,
+                "teacher": item.teacher,
+                "homework": item.homework_text,
+                "grades": row_grades,
+            }
+
+        attrs: dict[str, Any] = {
             "date": today_str,
             "text": text,
-            "lessons": [
-                {
-                    "number": item.number,
-                    "subject": item.subject,
-                    "time_from": item.time_from,
-                    "time_to": item.time_to,
-                    "room": item.room,
-                    "teacher": item.teacher,
-                }
-                for item in lessons
-            ],
+            "lessons": [_serialize_lesson(item) for item in lessons],
         }
+        if next_date_str or next_lessons is not None:
+            attrs["next_date"] = next_date_str
+            attrs["lessons_next"] = [
+                _serialize_lesson(item) for item in (next_lessons or [])
+            ]
+        return attrs
 
     def build_homework_extra_attributes(
         self, student: StudentData
@@ -984,6 +1009,7 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
             "uncompleted_text": uncompleted_text,
             "tasks": [
                 {
+                    "uid": t.uid,
                     "date": t.date_str,
                     "subject": t.subject,
                     "task": t.task,
@@ -1208,11 +1234,16 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
         active_start, active_end = await self._resolve_student_period(
             student, today_spb, period_start
         )
+        marks_from = active_start
+        for p_item in student.periods_list:
+            p_dt = _parse_lesson_date(str(p_item.get("date_from") or ""))
+            if p_dt is not None and p_dt < marks_from:
+                marks_from = p_dt
         marks_to = max(today_spb, active_end)
 
         try:
             marks_raw = await self.client.async_get_marks(
-                edu_id, active_start, marks_to
+                edu_id, marks_from, marks_to
             )
             self._apply_marks(
                 student,
@@ -1276,12 +1307,73 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
         numeric_grades: list[int] = []
         by_subject: dict[str, list[int]] = {}
         final_grades: dict[str, Any] = {}
+        period_grades: dict[str, dict[str, int]] = {}
+        grades_by_date_subj: dict[tuple[str, str], list[int]] = {}
         absences = 0
         lates = 0
         graded_rows: list[tuple[date, int, dict[str, Any], str]] = []
         today_grades: list[dict[str, Any]] = []
         today_seen_keys: set[str] = set()
         final_kw = self.tr_list("final_grade_keywords")
+        year_kw = self.tr_list("year_period_keywords")
+
+        parsed_periods: list[dict[str, Any]] = []
+        for idx_p, p_item in enumerate(student.periods_list):
+            p_name = str(p_item.get("name") or "").strip()
+            p_from = _parse_lesson_date(str(p_item.get("date_from") or ""))
+            p_to = _parse_lesson_date(str(p_item.get("date_to") or ""))
+            if not p_name:
+                continue
+            dur = (
+                (p_to - p_from).days
+                if (p_from is not None and p_to is not None)
+                else 0
+            )
+            is_yr = dur >= 200 or any(k in p_name.lower() for k in year_kw)
+            parsed_periods.append(
+                {
+                    "idx": idx_p,
+                    "name": p_name,
+                    "low": p_name.lower(),
+                    "from": p_from,
+                    "to": p_to,
+                    "dur": dur,
+                    "is_year": is_yr,
+                }
+            )
+        sub_periods = [p for p in parsed_periods if not p["is_year"]]
+        year_periods = [p for p in parsed_periods if p["is_year"]]
+
+        def _resolve_final_period_key(
+            w_type: str, m_dt: date | None
+        ) -> str:
+            w_low = w_type.lower().strip()
+            for p in parsed_periods:
+                if p["low"] and p["low"] in w_low:
+                    return p["name"]
+            if any(k in w_low for k in year_kw):
+                return year_periods[0]["name"] if year_periods else w_type
+            for idx_num, tokens in enumerate(
+                (
+                    ("1", " i "),
+                    ("2", " ii "),
+                    ("3", " iii "),
+                    ("4", " iv "),
+                )
+            ):
+                padded = f" {w_low} "
+                if any(tok in padded or w_low.startswith(tok.strip()) for tok in tokens):
+                    if idx_num < len(sub_periods):
+                        return sub_periods[idx_num]["name"]
+            if m_dt is not None and sub_periods:
+                for p in sub_periods:
+                    if (
+                        p["from"] is not None
+                        and p["to"] is not None
+                        and p["from"] <= m_dt <= p["to"]
+                    ):
+                        return p["name"]
+            return student.period_name or w_type or "final"
 
         edu_id = student.education_id
         known_set = self._known_grade_uids.get(edu_id)
@@ -1356,9 +1448,17 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
                     )
                     if is_final:
                         final_grades[subj] = grade_num
-                    elif in_period:
-                        numeric_grades.append(grade_num)
-                        by_subject.setdefault(subj, []).append(grade_num)
+                        p_key = _resolve_final_period_key(work_type, mark_dt)
+                        period_grades.setdefault(subj, {})[p_key] = grade_num
+                    else:
+                        if mark_dt is not None:
+                            d_key = mark_dt.strftime("%d.%m.%Y")
+                            grades_by_date_subj.setdefault(
+                                (d_key, subj), []
+                            ).append(grade_num)
+                        if in_period:
+                            numeric_grades.append(grade_num)
+                            by_subject.setdefault(subj, []).append(grade_num)
 
                     row_id = _pick_str(row, "id", "estimate_id") or str(idx)
                     grade_uid = f"{row_id}|{date_str}|{subj}|{val_str}|{work_type}"
@@ -1415,6 +1515,10 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
         student.absences_count = absences
         student.lates_count = lates
         student.final_grades = dict(sorted(final_grades.items()))
+        student.period_grades = {
+            k: dict(v) for k, v in sorted(period_grades.items())
+        }
+        student.grades_by_date_subject = grades_by_date_subj
         if numeric_grades:
             student.average_grade = round(
                 sum(numeric_grades) / len(numeric_grades), 2
@@ -1677,13 +1781,29 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
         lesson_tasks = [
             item for item in all_lessons if item.due == today_spb
         ]
+        future_dates = sorted(
+            {item.due for item in all_lessons if item.due > today_spb}
+        )
+        next_dt = (
+            future_dates[0]
+            if future_dates
+            else today_spb + timedelta(days=1)
+        )
+        next_date_str = next_dt.strftime("%d.%m.%Y")
+        next_lesson_tasks = [
+            item for item in all_lessons if item.due == next_dt
+        ]
         student.lesson_tasks = lesson_tasks
         student.calendar_lessons = all_lessons
         student.calendar_window_start = window_start
         student.calendar_window_end = window_end
         student.lessons_today_count = len(lesson_tasks)
         student.schedule_today_attributes = self._build_lessons_attributes(
-            today_str, lesson_tasks
+            today_str,
+            lesson_tasks,
+            next_date_str=next_date_str,
+            next_lessons=next_lesson_tasks,
+            grades_map=student.grades_by_date_subject,
         )
 
     async def async_get_calendar_lessons(

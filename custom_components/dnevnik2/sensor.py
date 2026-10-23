@@ -236,6 +236,12 @@ class Dnevnik2AverageGradeSensor(_BaseStudentSensor):
         if not st:
             return {}
         attrs: dict[str, Any] = {
+            "first_name": st.first_name,
+            "short_name": st.short_name,
+            "full_name": st.full_name,
+            "group_name": st.group_name,
+            "institution_name": st.institution_name,
+            "balance_limit": self.coordinator.balance_limit,
             "period_name": st.period_name or None,
             "period_start": st.period_start_str or None,
             "period_end": st.period_end_str or None,
@@ -245,6 +251,7 @@ class Dnevnik2AverageGradeSensor(_BaseStudentSensor):
             "lates_count": st.lates_count,
             "subject_averages": st.subject_averages,
             "final_grades": st.final_grades,
+            "period_grades": st.period_grades,
         }
         if st.periods_list:
             attrs["periods"] = st.periods_list

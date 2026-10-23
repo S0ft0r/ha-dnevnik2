@@ -4,13 +4,13 @@
   <img src="https://raw.githubusercontent.com/S0ft0r/ha-dnevnik2/main/custom_components/dnevnik2/brand/icon@2x.png" alt="Электронный дневник СПб (ha-dnevnik2)" width="128">
 </p>
 
-[![Version](https://img.shields.io/badge/version-0.1.29-blue.svg)](https://github.com/S0ft0r/ha-dnevnik2)
+[![Version](https://img.shields.io/badge/version-0.1.30-blue.svg)](https://github.com/S0ft0r/ha-dnevnik2)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2026.8%2B-41BDF5.svg)](https://www.home-assistant.io/)
 
 **История изменений:** [CHANGELOG.md](CHANGELOG.md)  
 **Полная документация:** [DOCUMENTATION.md](docs/DOCUMENTATION.md)
 
-**Версия:** 0.1.29  
+**Версия:** 0.1.30  
 **Домен интеграции:** `dnevnik2`
 
 Кастомная интеграция для подключения портала **«Петербургское образование. Электронный дневник»** (`https://dnevnik2.petersburgedu.ru`) к **Home Assistant**.
@@ -21,7 +21,7 @@
 
 1. **Двухшаговый мастер подключения через Госуслуги (ЕСИА)**
 2. **Модульная архитектура устройств (Основное устройство + Подустройство на каждого учащегося)**
-3. **Пользовательские иконки интеграции (`dnevnik2:*`) и перенос длинных названий**
+3. **Пользовательские иконки (`dnevnik2:*`) и встроенная карточка дашборда (`custom:dnevnik2-card`)**
 
 ---
 
