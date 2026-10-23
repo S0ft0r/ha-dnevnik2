@@ -1,10 +1,7 @@
 # Электронный дневник СПб (`dnevnik2`) — Интеграция для Home Assistant
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="custom_components/dnevnik2/brand/dark_icon@2x.png">
-    <img src="custom_components/dnevnik2/brand/icon@2x.png" alt="Электронный дневник СПб (ha-dnevnik2)" width="128">
-  </picture>
+  <img src="https://raw.githubusercontent.com/S0ft0r/ha-dnevnik2/main/custom_components/dnevnik2/brand/icon@2x.png" alt="Электронный дневник СПб (ha-dnevnik2)" width="128">
 </p>
 
 [![Version](https://img.shields.io/badge/version-0.1.27-blue.svg)](https://github.com/S0ft0r/ha-dnevnik2)
@@ -37,22 +34,22 @@
 ### На основном устройстве аккаунта
 | Сущность | Платформа | Иконка | Описание |
 | :--- | :---: | :--- | :--- |
-| **Учащихся в профиле** (`account_status`) | `sensor` | <img src="docs/icons/mdi-school.svg" width="22" height="22" align="absmiddle"> `mdi:school` | Количество привязанных учащихся и их список в атрибутах |
-| **Лимит баланса питания** (`balance_limit`) | `number` *(Конфигурация)* | <img src="docs/icons/dnevnik2-meal-balance.svg" width="22" height="22" align="absmiddle"> `dnevnik2:meal-balance` | Настраиваемый порог (`₽`), ниже которого на любом из сенсоров («Столовая» или «Буфет») генерируется событие `dnevnik2_low_balance` |
-| **Обновить данные** (`refresh`) | `button` | <img src="docs/icons/mdi-database-sync.svg" width="22" height="22" align="absmiddle"> `mdi:database-sync` | Внеочередной опрос API дневника |
-| **Статус сессии** (`connection_status`) | `sensor` *(Диагностика)* | <img src="docs/icons/mdi-cloud-check-outline.svg" width="22" height="22" align="absmiddle"> `mdi:cloud-check-outline` | Состояние сессии и портала (`Активна`, `Сбой портала (5xx)`, `Таймаут соединения`, `Токен истёк`) + параметры JWT-токена и история обновлений в атрибутах |
+| **Учащихся в профиле** (`account_status`) | `sensor` | <img src="https://raw.githubusercontent.com/S0ft0r/ha-dnevnik2/main/docs/icons/mdi-school.svg" width="22" height="22" align="absmiddle"> `mdi:school` | Количество привязанных учащихся и их список в атрибутах |
+| **Лимит баланса питания** (`balance_limit`) | `number` *(Конфигурация)* | <img src="https://raw.githubusercontent.com/S0ft0r/ha-dnevnik2/main/docs/icons/dnevnik2-meal-balance.svg" width="22" height="22" align="absmiddle"> `dnevnik2:meal-balance` | Настраиваемый порог (`₽`), ниже которого на любом из сенсоров («Столовая» или «Буфет») генерируется событие `dnevnik2_low_balance` |
+| **Обновить данные** (`refresh`) | `button` | <img src="https://raw.githubusercontent.com/S0ft0r/ha-dnevnik2/main/docs/icons/mdi-database-sync.svg" width="22" height="22" align="absmiddle"> `mdi:database-sync` | Внеочередной опрос API дневника |
+| **Статус сессии** (`connection_status`) | `sensor` *(Диагностика)* | <img src="https://raw.githubusercontent.com/S0ft0r/ha-dnevnik2/main/docs/icons/mdi-cloud-check-outline.svg" width="22" height="22" align="absmiddle"> `mdi:cloud-check-outline` | Состояние сессии и портала (`Активна`, `Сбой портала (5xx)`, `Таймаут соединения`, `Токен истёк`) + параметры JWT-токена и история обновлений в атрибутах |
 
 ### На подустройстве каждого учащегося
 | Сущность | Платформа | Иконка | Описание |
 | :--- | :---: | :--- | :--- |
-| **Средний балл** (`average_grade`) | `sensor` | <img src="docs/icons/dnevnik2-grade-avg.svg" width="22" height="22" align="absmiddle"> `dnevnik2:grade-avg` | Средний балл за период + средние баллы по предметам, число оценок, пропусков (`30000`) и опозданий (`30001`) в атрибутах |
-| **Последняя оценка** (`last_grade`) | `sensor` | <img src="docs/icons/mdi-numeric-5-box-outline.svg" width="22" height="22" align="absmiddle"> `mdi:numeric-{1..5}-box-outline` | Последняя полученная оценка (предмет, дата, тип работы, комментарий) + все оценки за сегодня (`today_count`, `today_text`, `today_grades`) в атрибутах |
-| **Домашние задания** (`homework`) | `todo` или `sensor` | <img src="docs/icons/dnevnik2-homework.svg" width="22" height="22" align="absmiddle"> `dnevnik2:homework`<br><img src="docs/icons/dnevnik2-homework-done.svg" width="22" height="22" align="absmiddle"> `dnevnik2:homework-done` | По выбору в настройках: интерактивный список дел (`todo`) с датами сдачи (`due`) и галочками «Выполнено» **или** числовой `sensor` с готовым многострочным атрибутом `text` / `uncompleted_text` |
-| **Расписание уроков / Уроков сегодня** (`lessons_today`) | `todo` или `sensor` | <img src="docs/icons/dnevnik2-schedule.svg" width="22" height="22" align="absmiddle"> `dnevnik2:schedule` | По выбору в настройках: интерактивный список дел (`todo`) с временем, кабинетами и учителями **или** числовой `sensor` с готовым многострочным атрибутом `text` |
-| **Последний проход через турникет** (`turnstile_last`) | `sensor` | <img src="docs/icons/dnevnik2-turnstile-clock.svg" width="22" height="22" align="absmiddle"> `dnevnik2:turnstile-clock` | Время последнего события СКУД школы и журнал последних проходов |
-| **В школе** (`at_school`) | `binary_sensor` | <img src="docs/icons/mdi-school.svg" width="22" height="22" align="absmiddle"> `mdi:school`<br><img src="docs/icons/dnevnik2-school-off.svg" width="22" height="22" align="absmiddle"> `dnevnik2:school-off` | Индикатор нахождения в здании школы по данным турникета СКУД |
-| **Столовая** (`meal_hot_balance`) | `sensor` *(Диагностика)* | <img src="docs/icons/dnevnik2-meal-balance.svg" width="22" height="22" align="absmiddle"> `dnevnik2:meal-balance` | Остаток средств на лицевом счёте столовой / горячего питания (`₽`) |
-| **Буфет** (`meal_buffet_balance`) | `sensor` *(Диагностика)* | <img src="docs/icons/dnevnik2-buffet-balance.svg" width="22" height="22" align="absmiddle"> `dnevnik2:buffet-balance` | Остаток средств на лицевом счёте буфета (`₽`, иконка стакана с монетой рубля) |
+| **Средний балл** (`average_grade`) | `sensor` | <img src="https://raw.githubusercontent.com/S0ft0r/ha-dnevnik2/main/docs/icons/dnevnik2-grade-avg.svg" width="22" height="22" align="absmiddle"> `dnevnik2:grade-avg` | Средний балл за период + средние баллы по предметам, число оценок, пропусков (`30000`) и опозданий (`30001`) в атрибутах |
+| **Последняя оценка** (`last_grade`) | `sensor` | <img src="https://raw.githubusercontent.com/S0ft0r/ha-dnevnik2/main/docs/icons/mdi-numeric-5-box-outline.svg" width="22" height="22" align="absmiddle"> `mdi:numeric-{1..5}-box-outline` | Последняя полученная оценка (предмет, дата, тип работы, комментарий) + все оценки за сегодня (`today_count`, `today_text`, `today_grades`) в атрибутах |
+| **Домашние задания** (`homework`) | `todo` или `sensor` | <img src="https://raw.githubusercontent.com/S0ft0r/ha-dnevnik2/main/docs/icons/dnevnik2-homework.svg" width="22" height="22" align="absmiddle"> `dnevnik2:homework`<br><img src="https://raw.githubusercontent.com/S0ft0r/ha-dnevnik2/main/docs/icons/dnevnik2-homework-done.svg" width="22" height="22" align="absmiddle"> `dnevnik2:homework-done` | По выбору в настройках: интерактивный список дел (`todo`) с датами сдачи (`due`) и галочками «Выполнено» **или** числовой `sensor` с готовым многострочным атрибутом `text` / `uncompleted_text` |
+| **Расписание уроков / Уроков сегодня** (`lessons_today`) | `todo` или `sensor` | <img src="https://raw.githubusercontent.com/S0ft0r/ha-dnevnik2/main/docs/icons/dnevnik2-schedule.svg" width="22" height="22" align="absmiddle"> `dnevnik2:schedule` | По выбору в настройках: интерактивный список дел (`todo`) с временем, кабинетами и учителями **или** числовой `sensor` с готовым многострочным атрибутом `text` |
+| **Последний проход через турникет** (`turnstile_last`) | `sensor` | <img src="https://raw.githubusercontent.com/S0ft0r/ha-dnevnik2/main/docs/icons/dnevnik2-turnstile-clock.svg" width="22" height="22" align="absmiddle"> `dnevnik2:turnstile-clock` | Время последнего события СКУД школы и журнал последних проходов |
+| **В школе** (`at_school`) | `binary_sensor` | <img src="https://raw.githubusercontent.com/S0ft0r/ha-dnevnik2/main/docs/icons/mdi-school.svg" width="22" height="22" align="absmiddle"> `mdi:school`<br><img src="https://raw.githubusercontent.com/S0ft0r/ha-dnevnik2/main/docs/icons/dnevnik2-school-off.svg" width="22" height="22" align="absmiddle"> `dnevnik2:school-off` | Индикатор нахождения в здании школы по данным турникета СКУД |
+| **Столовая** (`meal_hot_balance`) | `sensor` *(Диагностика)* | <img src="https://raw.githubusercontent.com/S0ft0r/ha-dnevnik2/main/docs/icons/dnevnik2-meal-balance.svg" width="22" height="22" align="absmiddle"> `dnevnik2:meal-balance` | Остаток средств на лицевом счёте столовой / горячего питания (`₽`) |
+| **Буфет** (`meal_buffet_balance`) | `sensor` *(Диагностика)* | <img src="https://raw.githubusercontent.com/S0ft0r/ha-dnevnik2/main/docs/icons/dnevnik2-buffet-balance.svg" width="22" height="22" align="absmiddle"> `dnevnik2:buffet-balance` | Остаток средств на лицевом счёте буфета (`₽`, иконка стакана с монетой рубля) |
 
 ---
 
