@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+import hashlib
 import hmac
 import logging
 from pathlib import Path
@@ -11,8 +12,9 @@ from urllib.parse import quote
 
 from aiohttp import web
 
-from homeassistant.components.frontend import add_extra_js_url
+from homeassistant.components.frontend import add_extra_js_url, remove_extra_js_url
 from homeassistant.components.http import HomeAssistantView, StaticPathConfig
+from homeassistant.components.lovelace import LOVELACE_DATA, MODE_STORAGE
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
@@ -91,6 +93,54 @@ class Dnevnik2FileProxyView(HomeAssistantView):
         return web.Response(body=body, headers=headers)
 
 
+async def _async_upsert_lovelace_resource(
+    hass: HomeAssistant, url: str
+) -> bool:
+    """Регистрирует JS-модуль в storage-ресурсах Lovelace после запуска frontend."""
+    lovelace_data = hass.data.get(LOVELACE_DATA)
+    if getattr(lovelace_data, "resource_mode", None) != MODE_STORAGE:
+        return False
+
+    resources = getattr(lovelace_data, "resources", None)
+    if resources is None or not all(
+        hasattr(resources, method)
+        for method in (
+            "async_get_info",
+            "async_items",
+            "async_create_item",
+            "async_update_item",
+            "async_delete_item",
+        )
+    ):
+        return False
+
+    # async_items() у storage-коллекции требует предварительной загрузки.
+    await resources.async_get_info()
+    base_url = url.split("?", 1)[0]
+    matches = [
+        item
+        for item in resources.async_items()
+        if str(item.get("url", "")).split("?", 1)[0] == base_url
+    ]
+
+    if not matches:
+        await resources.async_create_item({"url": url, "res_type": "module"})
+        return True
+
+    primary = matches[0]
+    updates: dict[str, str] = {}
+    if primary.get("url") != url:
+        updates["url"] = url
+    if primary.get("type") != "module":
+        updates["res_type"] = "module"
+    if updates:
+        await resources.async_update_item(primary["id"], updates)
+
+    for duplicate in matches[1:]:
+        await resources.async_delete_item(duplicate["id"])
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Загрузка интеграции, регистрация кастомных иконок и подустройств учеников."""
     cache = hass.data.get("translation_flatten_cache")
@@ -159,14 +209,55 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         )
                 hass.data[DOMAIN]["_frontend_registered"] = True
 
-            mtime_map: dict[str, int] = hass.data[DOMAIN].setdefault(
+            mtime_map: dict[str, int | str] = hass.data[DOMAIN].setdefault(
                 "_frontend_mtimes", {}
             )
+            resource_revision = hashlib.sha256(
+                Path(__file__).read_bytes()
+            ).hexdigest()[:8]
+            lovelace_data = hass.data.get(LOVELACE_DATA)
+            storage_resource_mode = (
+                getattr(lovelace_data, "resource_mode", None) == MODE_STORAGE
+            )
             for fpath, url_path in existing_assets:
-                ver = int(fpath.stat().st_mtime)
-                if mtime_map.get(url_path) != ver:
-                    add_extra_js_url(hass, f"{url_path}?v={ver}")
-                    mtime_map[url_path] = ver
+                ver = f"{int(fpath.stat().st_mtime)}-{resource_revision}"
+                module_url = f"{url_path}?v={ver}"
+                previous_ver = mtime_map.get(url_path)
+
+                if storage_resource_mode:
+                    # Старый app-shell import мог зарегистрировать элемент до
+                    # scoped custom element registry (HA 2026.9+). Убираем его
+                    # и загружаем модуль только как обычный ресурс Lovelace.
+                    if previous_ver is not None:
+                        remove_extra_js_url(
+                            hass, f"{url_path}?v={previous_ver}"
+                        )
+                    try:
+                        resource_registered = (
+                            await _async_upsert_lovelace_resource(hass, module_url)
+                        )
+                    except Exception as err:
+                        _LOGGER.warning(
+                            "Failed to register %s as a Lovelace resource: %s",
+                            url_path,
+                            err,
+                        )
+                        resource_registered = False
+                    if not resource_registered:
+                        _LOGGER.warning(
+                            "Lovelace resource storage is unavailable; "
+                            "falling back to the frontend module URL for %s",
+                            url_path,
+                        )
+                        add_extra_js_url(hass, module_url)
+                elif previous_ver != ver:
+                    if previous_ver is not None:
+                        remove_extra_js_url(
+                            hass, f"{url_path}?v={previous_ver}"
+                        )
+                    add_extra_js_url(hass, module_url)
+
+                mtime_map[url_path] = ver
         except Exception as err:
             _LOGGER.warning(
                 "Failed to register %s frontend assets: %s", DOMAIN, err
