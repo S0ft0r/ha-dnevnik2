@@ -141,6 +141,37 @@ async def _async_upsert_lovelace_resource(
     return True
 
 
+def _collect_frontend_asset_metadata(
+    frontend_dir: Path,
+    js_assets: list[tuple[str, str]],
+) -> list[tuple[Path, str, str]]:
+    """Собрать frontend-файлы и версии вне event loop.
+
+    Проверка файлов, stat() и чтение модуля блокируют поток, поэтому функция
+    вызывается через hass.async_add_executor_job().
+    """
+    asset_metadata: list[tuple[Path, str, int]] = []
+    for filename, url_path in js_assets:
+        file_path = frontend_dir / filename
+        try:
+            if not file_path.is_file():
+                continue
+            modified_at = int(file_path.stat().st_mtime)
+        except OSError as err:
+            _LOGGER.debug("Skipping unavailable frontend asset %s: %s", file_path, err)
+            continue
+        asset_metadata.append((file_path, url_path, modified_at))
+
+    if not asset_metadata:
+        return []
+
+    resource_revision = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()[:8]
+    return [
+        (file_path, url_path, f"{modified_at}-{resource_revision}")
+        for file_path, url_path, modified_at in asset_metadata
+    ]
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Загрузка интеграции, регистрация кастомных иконок и подустройств учеников."""
     cache = hass.data.get("translation_flatten_cache")
@@ -185,10 +216,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 hass.http.register_view(Dnevnik2FileProxyView(hass))
                 hass.data[DOMAIN]["_file_proxy_registered"] = True
 
+            frontend_assets = await hass.async_add_executor_job(
+                _collect_frontend_asset_metadata, frontend_dir, js_assets
+            )
             existing_assets = [
-                (frontend_dir / fname, url_path)
-                for fname, url_path in js_assets
-                if (frontend_dir / fname).is_file()
+                (file_path, url_path)
+                for file_path, url_path, _version in frontend_assets
             ]
             if existing_assets and not hass.data[DOMAIN].get(
                 "_frontend_registered"
@@ -212,15 +245,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             mtime_map: dict[str, int | str] = hass.data[DOMAIN].setdefault(
                 "_frontend_mtimes", {}
             )
-            resource_revision = hashlib.sha256(
-                Path(__file__).read_bytes()
-            ).hexdigest()[:8]
+            # Проверки путей и вычисление версий уже выполнены в executor.
             lovelace_data = hass.data.get(LOVELACE_DATA)
             storage_resource_mode = (
                 getattr(lovelace_data, "resource_mode", None) == MODE_STORAGE
             )
-            for fpath, url_path in existing_assets:
-                ver = f"{int(fpath.stat().st_mtime)}-{resource_revision}"
+            for _file_path, url_path, ver in frontend_assets:
                 module_url = f"{url_path}?v={ver}"
                 previous_ver = mtime_map.get(url_path)
 
