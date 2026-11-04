@@ -20,6 +20,8 @@ TO_REDACT = {
     "full_name",
     "short_name",
     "first_name",
+    "name",
+    "friendly_name",
     "person_id",
     "education_id",
     "hash_uid",

@@ -143,11 +143,9 @@ class Dnevnik2StudentHomeworkTodo(_BaseStudentTodo):
             if task.task:
                 desc_parts.append(task.task)
             for f in task.files:
-                link_target = f.proxy_url or f.url
-                if link_target:
-                    desc_parts.append(f"📎 [{f.name}]({link_target})")
-                else:
-                    desc_parts.append(f"📎 {f.name}")
+                # The built-in To-do view cannot add HA auth headers to direct file navigation.
+                # Keep the filename as text; the custom card signs proxy paths on click.
+                desc_parts.append(f"📎 {f.name}")
             description = "\n".join(desc_parts) if desc_parts else None
             items.append(
                 TodoItem(

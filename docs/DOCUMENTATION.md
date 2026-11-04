@@ -29,6 +29,26 @@
 2. **Шаг 1 из 2:** откройте предложенную ссылку входа через Госуслуги (ЕСИА) в браузере на компьютере, после входа нажмите `F12` (или `Ctrl+Shift+I`) → вкладка `Application` (`Приложение`) → `Cookies` → `https://dnevnik2.petersburgedu.ru`, скопируйте значение `X-JWT-Token` (`eyJ...`) и вставьте в поле.
 3. **Шаг 2 из 2:** проверьте список найденных учащихся и выберите формат вывода домашних заданий и расписания уроков (`Список дел (To-do)` или `Сенсор с текстовым атрибутом`).
 
+### Примеры страницы интеграции и настроек
+
+> Скриншоты показывают демонстрационные данные. Версия интеграции, видимая на странице Home Assistant, зафиксирована на момент съёмки и может отличаться от актуального релиза.
+
+![Запись интеграции Dnevnik2 и связанные устройства в Home Assistant](images/dnevnik2-integration-overview.png)
+
+*Запись интеграции, подключённые устройства учащихся и число созданных объектов.*
+
+![Окно настроек интеграции Dnevnik2](images/dnevnik2-options.png)
+
+*Параметры формата домашних заданий и расписания, календаря уроков и интервала обновления.*
+
+---
+
+## Доступность API из сети Home Assistant
+
+По результатам сетевых проверок, API портала может ограничивать соединения из некоторых зарубежных сетей: в таких случаях наблюдались таймауты. Это наблюдаемое поведение, а не опубликованная администрацией спецификация; оно может измениться.
+
+Важен внешний IP-адрес и маршрут **сервера Home Assistant**, который отправляет запросы к порталу, а не местоположение пользователя или браузера. Для стабильного доступа может потребоваться российский исходящий IP. При ошибке подключения или таймауте проверьте, через какой IP выходит Home Assistant, а также VPN, прокси и сетевую маршрутизацию. Ошибки авторизации (например, истёкший JWT) проверяйте отдельно от сетевой доступности.
+
 ---
 
 ## Создаваемые сущности
@@ -46,7 +66,7 @@
 | :--- | :---: | :--- | :--- |
 | **Средний балл** (`average_grade`) | `sensor` | <img src="https://raw.githubusercontent.com/S0ft0r/ha-dnevnik2/main/docs/icons/dnevnik2-grade-avg.svg" width="22" height="22" align="absmiddle"> `dnevnik2:grade-avg` | Средний балл за текущий учебный период (четверть/триместр/полугодие) + название и даты периода (`period_name`, `period_start`, `period_end`, `period_days_left`), средние баллы по предметам (`subject_averages`), итоговые оценки (`final_grades`), число оценок, пропусков (`30000`) и опозданий (`30001`) в атрибутах |
 | **Последняя оценка** (`last_grade`) | `sensor` | <img src="https://raw.githubusercontent.com/S0ft0r/ha-dnevnik2/main/docs/icons/mdi-numeric-5-box-outline.svg" width="22" height="22" align="absmiddle"> `mdi:numeric-{1..5}-box-outline` | Последняя полученная оценка (предмет, дата, тип работы, комментарий) + все оценки за сегодня (`today_count`, `today_text`, `today_grades`) в атрибутах |
-| **Домашние задания** (`homework`) | `todo` или `sensor` | <img src="https://raw.githubusercontent.com/S0ft0r/ha-dnevnik2/main/docs/icons/dnevnik2-homework.svg" width="22" height="22" align="absmiddle"> `dnevnik2:homework`<br><img src="https://raw.githubusercontent.com/S0ft0r/ha-dnevnik2/main/docs/icons/dnevnik2-homework-done.svg" width="22" height="22" align="absmiddle"> `dnevnik2:homework-done` | По выбору в настройках: интерактивный список дел (`todo`), где в заголовке выводится предмет (`summary`), а в описании (`description`) — текст задания и кликабельные ссылки `📎 [Имя файла](...)` на прикреплённые учителем файлы (скачиваются через встроенный прокси `/api/dnevnik2/file/...`), **или** числовой `sensor` с атрибутами `text` / `uncompleted_text` / `tasks[].files[]` |
+| **Домашние задания** (`homework`) | `todo` или `sensor` | <img src="https://raw.githubusercontent.com/S0ft0r/ha-dnevnik2/main/docs/icons/dnevnik2-homework.svg" width="22" height="22" align="absmiddle"> `dnevnik2:homework`<br><img src="https://raw.githubusercontent.com/S0ft0r/ha-dnevnik2/main/docs/icons/dnevnik2-homework-done.svg" width="22" height="22" align="absmiddle"> `dnevnik2:homework-done` | По выбору в настройках: интерактивный список дел (`todo`), где в заголовке выводится предмет (`summary`), а в описании (`description`) — текст задания и имена прикреплённых файлов без кликабельных ссылок; защищённое открытие файлов остаётся в `custom:dnevnik2-card` (подпись пути запрашивается при клике), **или** сенсор с атрибутами `text` / `uncompleted_text` / `tasks[].files[]` |
 | **Расписание уроков / Уроков сегодня** (`lessons_today`) | `todo` или `sensor` | <img src="https://raw.githubusercontent.com/S0ft0r/ha-dnevnik2/main/docs/icons/dnevnik2-schedule.svg" width="22" height="22" align="absmiddle"> `dnevnik2:schedule` | По выбору в настройках: интерактивный список дел (`todo`) с временем, кабинетами и учителями **или** числовой `sensor` с готовым многострочным атрибутом `text` |
 | **Календарь уроков** (`schedule`) | `calendar` | <img src="https://raw.githubusercontent.com/S0ft0r/ha-dnevnik2/main/docs/icons/dnevnik2-schedule.svg" width="22" height="22" align="absmiddle"> `dnevnik2:schedule` | Календарь расписания уроков учащегося с номером урока, предметом, кабинетом (`location`), учителем и домашним заданием (`description`) — создаётся при включённой опции «Создавать календарь уроков» |
 | **Последний проход через турникет** (`turnstile_last`) | `sensor` | <img src="https://raw.githubusercontent.com/S0ft0r/ha-dnevnik2/main/docs/icons/dnevnik2-turnstile-clock.svg" width="22" height="22" align="absmiddle"> `dnevnik2:turnstile-clock` | Время последнего события СКУД школы и журнал последних проходов |
@@ -54,11 +74,21 @@
 | **Столовая** (`meal_hot_balance`) | `sensor` *(Диагностика)* | <img src="https://raw.githubusercontent.com/S0ft0r/ha-dnevnik2/main/docs/icons/dnevnik2-meal-balance.svg" width="22" height="22" align="absmiddle"> `dnevnik2:meal-balance` | Остаток средств на лицевом счёте столовой / горячего питания (`₽`) |
 | **Буфет** (`meal_buffet_balance`) | `sensor` *(Диагностика)* | <img src="https://raw.githubusercontent.com/S0ft0r/ha-dnevnik2/main/docs/icons/dnevnik2-buffet-balance.svg" width="22" height="22" align="absmiddle"> `dnevnik2:buffet-balance` | Остаток средств на лицевом счёте буфета (`₽`, иконка стакана с монетой рубля) |
 
+### Пример страницы устройства учащегося
+
+![Группы «Управление», «Сенсоры» и «Диагностика» на странице устройства учащегося](images/dnevnik2-device-entities.png)
+
+*Пример отображения домашних заданий, учебных сенсоров и данных питания в Home Assistant (демонстрационные данные).*
+
 ---
 
 ## Карточка панели управления (`custom:dnevnik2-card`)
 
 Интеграция автоматически регистрирует собственную карточку для панели управления (Lovelace) — **«Электронный дневник СПб — Карточка учащегося / Табель»**. Добавлять файлы вручную в «Ресурсы» дашборда не требуется.
+
+![Примеры карточек учащихся с табелем оценок и расписанием уроков](images/dnevnik2-student-cards.png)
+
+*Две карточки учащихся на одной панели: табель оценок и расписание уроков (демонстрационные данные).*
 
 ### Добавление через визуальный редактор
 1. Нажмите **Изменить** (карандаш в правом верхнем углу дашборда) → **+ Добавить карточку**.

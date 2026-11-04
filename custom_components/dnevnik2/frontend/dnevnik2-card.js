@@ -9,7 +9,7 @@
  */
 
 const CARD_TYPE = "dnevnik2-card";
-const CARD_VERSION = "0.1.33";
+const CARD_VERSION = "0.1.33.1";
 
 const SVG_ICONS = {
   gradeAvg:
