@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 import hashlib
-import hmac
 import json
 import logging
 from pathlib import Path
@@ -300,11 +299,10 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
     def _make_http_session(self):
         """Создаёт чистую изолированную IPv4 HTTP-сессию без кэширования чужих cookie."""
         clear_petersburgedu_cookies(
-            async_get_clientsession(self.hass, verify_ssl=False)
+            async_get_clientsession(self.hass)
         )
         return async_create_clientsession(
             self.hass,
-            verify_ssl=False,
             family=socket.AF_INET,
             cookie_jar=DummyCookieJar(),
         )
@@ -813,12 +811,6 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
 
         self._emit_low_balance_events(prev_map, curr_map)
 
-    def file_download_signature(self, file_uuid: str) -> str:
-        """Вычисляет HMAC-подпись для безопасного скачивания файла через локальный прокси HA."""
-        secret = self.entry.entry_id.encode("utf-8")
-        msg = str(file_uuid or "").strip().encode("utf-8")
-        return hmac.new(secret, msg, hashlib.sha256).hexdigest()[:16]
-
     def _extract_task_files(
         self, source: dict[str, Any]
     ) -> list[HomeworkFile]:
@@ -844,10 +836,9 @@ class Dnevnik2Coordinator(DataUpdateCoordinator[dict[str, StudentData]]):
             proxy_url = ""
             if f_uuid:
                 direct_url = f"{BASE_URL}{EP_FILEKIT_DOWNLOAD}?p_uuid={f_uuid}"
-                sig = self.file_download_signature(f_uuid)
                 proxy_url = (
                     f"/api/{DOMAIN}/file/{self.entry.entry_id}/{f_uuid}"
-                    f"?sig={sig}&name={quote(f_name)}"
+                    f"?name={quote(f_name)}"
                 )
             else:
                 raw_url = _pick_str(f_obj, "url", "path", "link", "href")

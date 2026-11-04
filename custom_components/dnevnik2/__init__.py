@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import timedelta
 import hashlib
-import hmac
 import logging
 from pathlib import Path
 from typing import Any
@@ -54,7 +53,7 @@ class Dnevnik2FileProxyView(HomeAssistantView):
 
     url = FILE_PROXY_URL_PATH
     name = f"api:{DOMAIN}:file"
-    requires_auth = False
+    requires_auth = True
 
     def __init__(self, hass: HomeAssistant) -> None:
         """Инициализация прокси-обработчика файлов."""
@@ -69,11 +68,6 @@ class Dnevnik2FileProxyView(HomeAssistantView):
         ).get(entry_id)
         if not isinstance(coordinator, Dnevnik2Coordinator):
             return web.Response(status=404, text="Integration entry not found")
-
-        sig = request.query.get("sig", "")
-        expected_sig = coordinator.file_download_signature(file_uuid)
-        if not sig or not hmac.compare_digest(sig, expected_sig):
-            return web.Response(status=403, text="Invalid file signature")
 
         file_name = request.query.get("name", "") or f"{file_uuid}.bin"
         result = await coordinator.client.async_download_file(file_uuid)

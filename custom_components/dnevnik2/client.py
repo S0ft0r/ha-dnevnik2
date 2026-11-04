@@ -628,7 +628,6 @@ class Dnevnik2Client:
                 },
                 timeout=self._timeout,
                 allow_redirects=False,
-                ssl=False,
             ) as resp:
                 sc_names = _collect_set_cookies(
                     list(resp.headers.getall("Set-Cookie", []))
@@ -694,7 +693,6 @@ class Dnevnik2Client:
                     },
                     timeout=self._timeout,
                     allow_redirects=False,
-                    ssl=False,
                 ) as hop_resp:
                     sc_names = _collect_set_cookies(
                         list(hop_resp.headers.getall("Set-Cookie", []))
@@ -778,7 +776,6 @@ class Dnevnik2Client:
                 headers=self._headers(include_auth=include_auth),
                 timeout=self._timeout,
                 allow_redirects=False,
-                ssl=False,
             ) as response:
                 set_cookie_headers = list(
                     response.headers.getall("Set-Cookie", [])
@@ -1187,7 +1184,6 @@ class Dnevnik2Client:
                 headers=self._headers(include_auth=True),
                 timeout=self._timeout,
                 allow_redirects=True,
-                ssl=False,
             ) as response:
                 self._clear_session_cookie_jar()
                 if response.status != 200:
@@ -1276,7 +1272,6 @@ class Dnevnik2Client:
                     headers=self._headers(include_auth=True),
                     timeout=self._timeout,
                     allow_redirects=False,
-                    ssl=False,
                 ) as response:
                     self._clear_session_cookie_jar()
                     if response.status == 200:
@@ -1332,7 +1327,6 @@ class Dnevnik2Client:
                 url,
                 headers={"User-Agent": USER_AGENT},
                 timeout=self._timeout,
-                ssl=False,
             ) as response:
                 if response.status != 200:
                     return []

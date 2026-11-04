@@ -140,12 +140,11 @@ def _is_mobile_or_companion_request() -> bool:
 
 def _get_isolated_session(hass: HomeAssistant) -> ClientSession:
     """Возвращает сессию aiohttp с DummyCookieJar и очищает общий CookieJar HA от старых cookie."""
-    shared = aiohttp_client.async_get_clientsession(hass, verify_ssl=False)
+    shared = aiohttp_client.async_get_clientsession(hass)
     if callable(clear_petersburgedu_cookies):
         clear_petersburgedu_cookies(shared)
     return aiohttp_client.async_create_clientsession(
         hass,
-        verify_ssl=False,
         cookie_jar=DummyCookieJar(),
     )
 

@@ -24,6 +24,8 @@ TO_REDACT = {
     "education_id",
     "hash_uid",
     "teacher",
+    "customer",
+    "account_number",
 }
 
 

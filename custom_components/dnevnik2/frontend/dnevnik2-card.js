@@ -9,7 +9,7 @@
  */
 
 const CARD_TYPE = "dnevnik2-card";
-const CARD_VERSION = "0.1.32.2";
+const CARD_VERSION = "0.1.33";
 
 const SVG_ICONS = {
   gradeAvg:
@@ -1514,10 +1514,18 @@ class Dnevnik2Card extends HTMLElement {
               const filesHtml = files.length
                 ? `<div class="hw-files">${files
                     .map((f) => {
-                      const href = f.proxy_url || f.url || "#";
+                      const proxyPath =
+                        typeof f.proxy_url === "string" &&
+                        f.proxy_url.startsWith("/api/dnevnik2/file/")
+                          ? f.proxy_url
+                          : "";
+                      const href = proxyPath || f.url || "#";
+                      const proxyAttr = proxyPath
+                        ? `data-file-proxy-path="${escapeHtml(proxyPath)}"`
+                        : "";
                       return `<a class="hw-file-link" href="${escapeHtml(
                         href
-                      )}" target="_blank" rel="noopener">📎 ${escapeHtml(
+                      )}" ${proxyAttr} target="_blank" rel="noopener">📎 ${escapeHtml(
                         f.name || "Файл"
                       )}</a>`;
                     })
@@ -2045,6 +2053,48 @@ class Dnevnik2Card extends HTMLElement {
       chk.addEventListener("change", (ev) => {
         const uid = chk.getAttribute("data-uid");
         this._toggleHomeworkItem(ids.homework, uid, Boolean(ev.target.checked));
+      });
+    });
+
+    root.querySelectorAll("[data-file-proxy-path]").forEach((link) => {
+      link.addEventListener("click", async (ev) => {
+        const path = link.getAttribute("data-file-proxy-path") || "";
+        if (!path.startsWith("/api/dnevnik2/file/")) return;
+        if (typeof this._hass?.callWS !== "function") return;
+
+        ev.preventDefault();
+        const newWindow = window.open("about:blank", "_blank");
+        if (newWindow) newWindow.opener = null;
+
+        try {
+          const result = await this._hass.callWS({
+            type: "auth/sign_path",
+            path,
+            expires: 30,
+          });
+          if (typeof result?.path !== "string") {
+            throw new Error("Home Assistant did not return a signed path");
+          }
+
+          const signedUrl = new URL(result.path, window.location.href);
+          if (
+            signedUrl.origin !== window.location.origin ||
+            !signedUrl.pathname.startsWith("/api/dnevnik2/file/")
+          ) {
+            throw new Error("Home Assistant returned an unexpected file path");
+          }
+
+          if (newWindow && !newWindow.closed) {
+            newWindow.location.replace(signedUrl.href);
+          } else {
+            window.location.assign(signedUrl.href);
+          }
+        } catch (err) {
+          if (newWindow && !newWindow.closed) newWindow.close();
+          console.warn("Не удалось подписать ссылку на файл дневника", err);
+          // Fallback remains protected by Home Assistant authentication.
+          window.location.assign(new URL(path, window.location.href).href);
+        }
       });
     });
 
